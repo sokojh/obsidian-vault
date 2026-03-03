@@ -1,5 +1,3 @@
-use std::process;
-
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -48,10 +46,6 @@ impl OvError {
         }
     }
 
-    pub fn exit(&self) -> ! {
-        eprintln!("error: {self}");
-        process::exit(self.exit_code());
-    }
 }
 
 pub type OvResult<T> = Result<T, OvError>;

@@ -59,30 +59,6 @@ pub fn scan_vault(root: &Path, extra_excludes: &[String]) -> Vec<PathBuf> {
     files
 }
 
-/// Check if a file is iCloud evicted (not downloaded)
-pub fn is_icloud_evicted(path: &Path) -> bool {
-    let name = path.file_name().unwrap_or_default().to_string_lossy();
-
-    // iCloud evicted files appear as .filename.icloud
-    if name.starts_with('.') && name.ends_with(".icloud") {
-        return true;
-    }
-
-    // Check for extended attributes (macOS)
-    #[cfg(target_os = "macos")]
-    {
-        // com.apple.icloud.itemDownloadRequested xattr indicates evicted
-        if let Ok(metadata) = std::fs::metadata(path) {
-            if metadata.len() == 0 {
-                // Zero-byte file might be evicted
-                return false; // Can't be sure, just skip
-            }
-        }
-    }
-
-    false
-}
-
 fn is_excluded_dir(path: &Path, root: &Path, extra_excludes: &[String]) -> bool {
     if !path.is_dir() {
         return false;

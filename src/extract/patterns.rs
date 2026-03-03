@@ -25,10 +25,15 @@ lazy_static! {
 /// Extract all wiki links from text, with line numbers
 pub fn extract_links(content: &str) -> Vec<WikiLink> {
     let mut links = Vec::new();
+    let mut in_code_block = false;
 
     for (line_num, line) in content.lines().enumerate() {
-        // Skip code blocks
-        if line.trim_start().starts_with("```") {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            in_code_block = !in_code_block;
+            continue;
+        }
+        if in_code_block {
             continue;
         }
 
@@ -155,5 +160,39 @@ mod tests {
         assert_eq!(headings[0], (1, "Title".to_string()));
         assert_eq!(headings[1], (2, "Section".to_string()));
         assert_eq!(headings[2], (3, "Sub".to_string()));
+    }
+
+    #[test]
+    fn test_extract_links_skip_code_blocks() {
+        let content = "See [[real link]]\n```\n[[inside code block]]\n```\n[[after code block]]";
+        let links = extract_links(content);
+        assert_eq!(links.len(), 2);
+        assert_eq!(links[0].target, "real link");
+        assert_eq!(links[1].target, "after code block");
+    }
+
+    #[test]
+    fn test_extract_links_skip_code_block_with_language() {
+        let content = "```rust\nlet x = \"[[not a link]]\";\n```\n[[real]]";
+        let links = extract_links(content);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target, "real");
+    }
+
+    #[test]
+    fn test_extract_links_multiple_code_blocks() {
+        let content = "[[a]]\n```\n[[b]]\n```\n[[c]]\n```\n[[d]]\n```\n[[e]]";
+        let links = extract_links(content);
+        let targets: Vec<&str> = links.iter().map(|l| l.target.as_str()).collect();
+        assert_eq!(targets, vec!["a", "c", "e"]);
+    }
+
+    #[test]
+    fn test_extract_links_embeds_in_code_block() {
+        let content = "```\n![[embed_in_code.png]]\n```\n![[real_embed.png]]";
+        let links = extract_links(content);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target, "real_embed.png");
+        assert!(links[0].is_embed);
     }
 }

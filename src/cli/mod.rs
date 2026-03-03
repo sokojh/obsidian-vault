@@ -82,7 +82,7 @@ pub enum Command {
     Mcp(mcp::McpArgs),
 }
 
-#[derive(Debug, Clone, ValueEnum)]
+#[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum OutputFormat {
     Human,
     Json,
