@@ -3,7 +3,6 @@ mod config;
 mod error;
 mod extract;
 mod index;
-mod mcp;
 mod model;
 mod output;
 mod search;
@@ -77,7 +76,6 @@ fn run(cli: Cli) -> Result<(), OvError> {
         Command::Create(args) => cmd_create(&ctx, args),
         Command::Append(args) => cmd_append(&ctx, args),
         Command::Index(args) => cmd_index(&ctx, args),
-        Command::Mcp(_) => cmd_mcp(&ctx),
     }
 }
 
@@ -551,19 +549,6 @@ fn cmd_graph(ctx: &Ctx, args: cli::graph::GraphArgs) -> Result<(), OvError> {
     Ok(())
 }
 
-// ─── mcp ─────────────────────────────────────────────────────────────────
-
-fn cmd_mcp(ctx: &Ctx) -> Result<(), OvError> {
-    let vault_path = paths::resolve_vault_path(ctx.vault.as_deref())?;
-
-    let rt = tokio::runtime::Runtime::new().map_err(|e| OvError::General(e.to_string()))?;
-    rt.block_on(async {
-        mcp::run_mcp_server(vault_path)
-            .await
-            .map_err(|e| OvError::General(e.to_string()))
-    })
-}
-
 // ─── daily ───────────────────────────────────────────────────────────────
 
 fn cmd_daily(ctx: &Ctx, args: cli::daily::DailyArgs) -> Result<(), OvError> {
@@ -664,21 +649,110 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
     };
     let full_path = vault.root.join(&relative);
 
-    if full_path.exists() {
-        return Err(OvError::General(format!("Note already exists: {relative}")));
+    // Path traversal protection: normalize logical path and verify it stays under vault root.
+    {
+        let canonical_root = vault
+            .root
+            .canonicalize()
+            .map_err(|e| OvError::General(e.to_string()))?;
+        let mut normalized = canonical_root.clone();
+        for component in std::path::Path::new(&relative).components() {
+            match component {
+                std::path::Component::ParentDir => {
+                    normalized.pop();
+                }
+                std::path::Component::Normal(c) => {
+                    normalized.push(c);
+                }
+                _ => {} // skip CurDir, Prefix, RootDir
+            }
+        }
+        if !normalized.starts_with(&canonical_root) {
+            return Err(OvError::General(format!(
+                "Path escapes vault boundary: {relative}"
+            )));
+        }
     }
 
     // Build content
     let mut content = String::new();
 
-    // Read from template if specified
-    if let Some(ref template_name) = args.template {
+    if let Some(ref frontmatter_json) = args.frontmatter {
+        // ── Frontmatter path (new): dynamic YAML frontmatter from JSON ──
+        let mut fm_map: std::collections::BTreeMap<String, serde_json::Value> =
+            serde_json::from_str(frontmatter_json).map_err(|e| {
+                OvError::General(format!("Invalid frontmatter JSON: {e}"))
+            })?;
+
+        // Merge --tags into frontmatter
+        if let Some(ref tags_str) = args.tags {
+            let tag_values: Vec<serde_json::Value> = tags_str
+                .split(',')
+                .map(|t| {
+                    let t = t.trim();
+                    let tag = if t.starts_with('#') {
+                        t.to_string()
+                    } else {
+                        format!("#{t}")
+                    };
+                    serde_json::Value::String(tag)
+                })
+                .collect();
+
+            fm_map
+                .entry("tags".to_string())
+                .and_modify(|v| {
+                    if let serde_json::Value::Array(arr) = v {
+                        arr.extend(tag_values.clone());
+                    } else {
+                        *v = serde_json::Value::Array(tag_values.clone());
+                    }
+                })
+                .or_insert(serde_json::Value::Array(tag_values));
+        }
+
+        if !fm_map.is_empty() {
+            let yaml_str = serde_yaml::to_string(&fm_map)
+                .map_err(|e| OvError::General(e.to_string()))?;
+            content.push_str("---\n");
+            content.push_str(&yaml_str);
+            if !yaml_str.ends_with('\n') {
+                content.push('\n');
+            }
+            content.push_str("---\n");
+        }
+
+        // Add sections
+        if let Some(ref sections_str) = args.sections {
+            for heading in sections_str.split(',') {
+                let heading = heading.trim();
+                if !heading.is_empty() {
+                    content.push_str(&format!("\n## {heading}\n\n"));
+                }
+            }
+        }
+
+        // Add body content
+        if let Some(ref body) = args.content {
+            if !content.ends_with('\n') {
+                content.push('\n');
+            }
+            content.push_str(body);
+            if !body.ends_with('\n') {
+                content.push('\n');
+            }
+        }
+    } else if let Some(ref template_name) = args.template {
+        // ── Template path (existing): read template file + variable substitution ──
         let template_dir = vault
             .obsidian_config
             .template_folder
             .as_deref()
             .unwrap_or("Templates");
-        let template_path = vault.root.join(template_dir).join(format!("{template_name}.md"));
+        let template_path = vault
+            .root
+            .join(template_dir)
+            .join(format!("{template_name}.md"));
         if template_path.exists() {
             content = std::fs::read_to_string(&template_path)?;
             // Replace template variables
@@ -704,18 +778,29 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
         } else {
             eprintln!("Template not found: {template_name}");
         }
-    }
 
-    // Read from stdin if requested
-    if args.stdin {
-        use std::io::Read;
-        let mut stdin_content = String::new();
-        std::io::stdin().read_to_string(&mut stdin_content)?;
-        content.push_str(&stdin_content);
-    }
+        // Append sections after template content
+        if let Some(ref sections_str) = args.sections {
+            for heading in sections_str.split(',') {
+                let heading = heading.trim();
+                if !heading.is_empty() {
+                    content.push_str(&format!("\n## {heading}\n\n"));
+                }
+            }
+        }
 
-    // Add tags if specified and content is empty (no template)
-    if content.is_empty() {
+        // Append body content after template
+        if let Some(ref body) = args.content {
+            if !content.ends_with('\n') {
+                content.push('\n');
+            }
+            content.push_str(body);
+            if !body.ends_with('\n') {
+                content.push('\n');
+            }
+        }
+    } else {
+        // ── Default path (no template, no frontmatter): simple note ──
         content.push_str(&format!("# {}\n\n", args.title));
         if let Some(ref tags_str) = args.tags {
             let tags: Vec<&str> = tags_str.split(',').map(|t| t.trim()).collect();
@@ -731,14 +816,58 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
                 .collect();
             content.push_str(&format!("Tags: {}\n\n", tags_formatted.join(" ")));
         }
+
+        // Add sections
+        if let Some(ref sections_str) = args.sections {
+            for heading in sections_str.split(',') {
+                let heading = heading.trim();
+                if !heading.is_empty() {
+                    content.push_str(&format!("## {heading}\n\n"));
+                }
+            }
+        }
+
+        // Add body content
+        if let Some(ref body) = args.content {
+            if !content.ends_with('\n') {
+                content.push('\n');
+            }
+            content.push_str(body);
+            if !body.ends_with('\n') {
+                content.push('\n');
+            }
+        }
     }
 
-    // Create parent directory if needed
+    // Read from stdin if requested
+    if args.stdin {
+        use std::io::Read;
+        let mut stdin_content = String::new();
+        std::io::stdin().read_to_string(&mut stdin_content)?;
+        content.push_str(&stdin_content);
+    }
+
+    // Create parent directory if needed (after path traversal check)
     if let Some(parent) = full_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
-    std::fs::write(&full_path, &content)?;
+    // Atomic file creation: O_CREAT | O_EXCL via create_new(true)
+    // Single syscall — no TOCTOU race between exists() and write()
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&full_path)
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                OvError::General(format!("Note already exists: {relative}"))
+            } else {
+                OvError::General(e.to_string())
+            }
+        })?;
+    file.write_all(content.as_bytes())?;
+    file.sync_all()?;
 
     if !ctx.quiet {
         eprintln!("Created note: {relative}");

@@ -6,7 +6,6 @@ pub mod graph;
 pub mod index;
 pub mod links;
 pub mod list;
-pub mod mcp;
 pub mod read;
 pub mod search;
 pub mod stats;
@@ -81,9 +80,6 @@ pub enum Command {
 
     /// Append content to an existing note
     Append(append::AppendArgs),
-
-    /// Start MCP server (stdio)
-    Mcp(mcp::McpArgs),
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
