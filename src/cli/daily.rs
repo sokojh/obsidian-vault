@@ -2,11 +2,11 @@ use clap::Args;
 
 #[derive(Args)]
 pub struct DailyArgs {
-    /// Date (YYYY-MM-DD), defaults to today
+    /// Target date in YYYY-MM-DD format (defaults to today)
     #[arg(long)]
     pub date: Option<String>,
 
-    /// Only show what would be created
+    /// Preview what would be created without writing the file
     #[arg(long)]
     pub dry_run: bool,
 }

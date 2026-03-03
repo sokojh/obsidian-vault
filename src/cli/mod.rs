@@ -17,22 +17,34 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[command(
     name = "ov",
     about = "Obsidian Vault CLI — high-performance vault interface for terminal and AI",
-    version
+    version,
+    after_long_help = "\x1b[1mExamples:\x1b[0m
+  ov list --format json                          # List recent notes as JSON
+  ov search \"kubernetes\" --snippet               # Full-text search with snippets
+  ov read \"ElasticSearch\" --raw                   # Read note body (fuzzy match)
+  ov create \"My Note\" --tags \"idea,k8s\"           # Create a simple note
+  ov create \"장애보고\" --frontmatter '{\"type\":\"troubleshooting\"}' --sections \"원인,해결\"
+  ov append \"My Note\" --section \"Timeline\" --content \"14:30 이벤트\"
+  ov tags --sort count --format json             # List all tags
+  ov index build                                 # Build/update search index
+
+\x1b[1mEnvironment:\x1b[0m
+  OV_VAULT    Path to vault (alternative to --vault)"
 )]
 pub struct Cli {
-    /// Path to Obsidian vault
+    /// Path to Obsidian vault root directory
     #[arg(long, env = "OV_VAULT", global = true)]
     pub vault: Option<String>,
 
-    /// Output format
+    /// Output format: human (table), json (wrapped), jsonl (streaming)
     #[arg(long, short, default_value = "human", global = true)]
     pub format: OutputFormat,
 
-    /// Select specific fields (comma-separated)
+    /// Select specific fields in output (comma-separated, e.g., "title,tags,path")
     #[arg(long, global = true)]
     pub fields: Option<String>,
 
-    /// Suppress stderr output
+    /// Suppress informational stderr messages
     #[arg(long, short, global = true)]
     pub quiet: bool,
 
@@ -42,43 +54,43 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Full-text search with tag:/in:/title:/date: prefixes
+    /// Full-text search (requires: ov index build). Supports tag:/in:/title:/date: prefixes
     Search(search::SearchArgs),
 
-    /// Read a note (fuzzy name matching)
+    /// Read a note by name with fuzzy matching
     Read(read::ReadArgs),
 
-    /// List notes with filtering and sorting
+    /// List notes with filtering by dir/tag/date and sorting
     List(list::ListArgs),
 
-    /// List all tags with counts
+    /// List all tags with occurrence counts
     Tags(tags::TagsArgs),
 
-    /// Show outgoing links from a note
+    /// Show outgoing [[wiki-links]] from a note
     Links(links::LinksArgs),
 
-    /// Show incoming links (backlinks) to a note
+    /// Show incoming backlinks pointing to a note
     Backlinks(links::BacklinksArgs),
 
-    /// Link graph visualization
+    /// Explore the link graph (JSON, DOT, or Mermaid output)
     Graph(graph::GraphArgs),
 
-    /// Vault statistics
+    /// Show vault-wide statistics (note count, word count, tags, etc.)
     Stats(stats::StatsArgs),
 
-    /// Today's daily note
+    /// Open or create today's daily note
     Daily(daily::DailyArgs),
 
-    /// Create a new note
+    /// Create a new note (plain, frontmatter, or template-based)
     Create(create::CreateArgs),
 
-    /// Search index management
+    /// Manage the Tantivy search index (build, status, clear)
     Index(index::IndexArgs),
 
-    /// Configuration management
+    /// Get or set configuration values
     Config(config::ConfigArgs),
 
-    /// Append content to an existing note
+    /// Append content to an existing note (end, section, or dated entry)
     Append(append::AppendArgs),
 }
 
