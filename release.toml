@@ -1,0 +1,21 @@
+## cargo-release configuration
+## Usage: cargo release [patch|minor|major]
+## Docs: https://github.com/crate-ci/cargo-release
+
+# Perform all steps (bump, commit, tag, push)
+allow-branch = ["main"]
+sign-commit = false
+sign-tag = false
+
+# Tag format
+tag-prefix = "v"
+tag-name = "v{{version}}"
+
+# Commit message
+pre-release-commit-message = "release: v{{version}}"
+
+# Push after tagging (triggers GitHub Actions release workflow)
+push-remote = "origin"
+
+# Don't publish to crates.io from local (GitHub Actions handles it)
+publish = false
