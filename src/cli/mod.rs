@@ -3,6 +3,7 @@ pub mod config;
 pub mod create;
 pub mod daily;
 pub mod graph;
+pub mod guide;
 pub mod index;
 pub mod links;
 pub mod list;
@@ -29,7 +30,10 @@ use clap::{Parser, Subcommand, ValueEnum};
   ov index build                                 # Build/update search index
 
 \x1b[1mEnvironment:\x1b[0m
-  OV_VAULT    Path to vault (alternative to --vault)"
+  OV_VAULT    Path to vault (alternative to --vault)
+
+\x1b[1mNew to ov?\x1b[0m
+  Run 'ov guide' for vault philosophy, note types, and best practices."
 )]
 pub struct Cli {
     /// Path to Obsidian vault root directory
@@ -92,6 +96,9 @@ pub enum Command {
 
     /// Append content to an existing note (end, section, or dated entry)
     Append(append::AppendArgs),
+
+    /// Knowledge management guide — vault philosophy and best practices
+    Guide(guide::GuideArgs),
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
