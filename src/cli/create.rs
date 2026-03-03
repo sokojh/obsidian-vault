@@ -14,7 +14,7 @@ pub struct CreateArgs {
     pub tags: Option<String>,
 
     /// Template to use
-    #[arg(long, conflicts_with_all = ["frontmatter", "sections"])]
+    #[arg(long, conflicts_with = "frontmatter")]
     pub template: Option<String>,
 
     /// Read content from stdin
@@ -22,7 +22,7 @@ pub struct CreateArgs {
     pub stdin: bool,
 
     /// Template variables (key1=val1,key2=val2)
-    #[arg(long, conflicts_with_all = ["frontmatter", "sections"])]
+    #[arg(long, requires = "template", conflicts_with = "frontmatter")]
     pub vars: Option<String>,
 
     /// Frontmatter as JSON string (e.g., '{"type":"person","role":"SRE"}')

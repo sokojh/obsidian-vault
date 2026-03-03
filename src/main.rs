@@ -9,6 +9,7 @@ mod search;
 mod service;
 mod vault;
 
+use std::io::{Read, Write};
 use std::process;
 
 use clap::Parser;
@@ -629,8 +630,139 @@ fn cmd_daily(ctx: &Ctx, args: cli::daily::DailyArgs) -> Result<(), OvError> {
 
 // ─── create ──────────────────────────────────────────────────────────────
 
+/// Sanitize title for use as filename. Rejects dangerous characters.
+fn sanitize_title(title: &str) -> Result<String, OvError> {
+    if title.contains('\0') {
+        return Err(OvError::General(
+            "Title contains null byte".to_string(),
+        ));
+    }
+    if title.contains('/') || title.contains('\\') {
+        return Err(OvError::General(
+            "Title cannot contain path separators (/ or \\)".to_string(),
+        ));
+    }
+    if title == "." || title == ".." {
+        return Err(OvError::General(
+            "Title cannot be '.' or '..'".to_string(),
+        ));
+    }
+    // Strip .md extension if user accidentally included it
+    let clean = title.strip_suffix(".md").unwrap_or(title);
+    if clean.is_empty() {
+        return Err(OvError::General("Title cannot be empty".to_string()));
+    }
+    // Check filename length (255 bytes max on most filesystems)
+    let filename = format!("{clean}.md");
+    if filename.len() > 255 {
+        return Err(OvError::General(format!(
+            "Filename too long ({} bytes, max 255): {filename}",
+            filename.len()
+        )));
+    }
+    Ok(clean.to_string())
+}
+
+/// Validate that the resolved path stays within vault root.
+/// Checks both logical path (component walk) and physical path (post-mkdir canonicalize).
+fn validate_path_safety(
+    vault_root: &std::path::Path,
+    relative: &str,
+    parent: &std::path::Path,
+) -> Result<(), OvError> {
+    let canonical_root = vault_root
+        .canonicalize()
+        .map_err(|e| OvError::General(format!("Cannot canonicalize vault root: {e}")))?;
+
+    // Phase 1: logical path check (before any I/O)
+    let mut normalized = canonical_root.clone();
+    for component in std::path::Path::new(relative).components() {
+        match component {
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            std::path::Component::Normal(c) => {
+                normalized.push(c);
+            }
+            _ => {} // skip CurDir, Prefix, RootDir
+        }
+    }
+    if !normalized.starts_with(&canonical_root) {
+        return Err(OvError::General(format!(
+            "Path escapes vault boundary: {relative}"
+        )));
+    }
+
+    // Phase 2: physical path check (after mkdir, catches symlink escape)
+    if parent.exists() {
+        let canonical_parent = parent.canonicalize().map_err(|e| {
+            OvError::General(format!(
+                "Cannot canonicalize parent {}: {e}",
+                parent.display()
+            ))
+        })?;
+        if !canonical_parent.starts_with(&canonical_root) {
+            return Err(OvError::General(format!(
+                "Path escapes vault boundary (symlink): {relative}"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+/// Append `## Heading` sections to content string.
+fn append_sections(content: &mut String, sections_str: &str) {
+    for heading in sections_str.split(',') {
+        let heading = heading.trim();
+        if !heading.is_empty() {
+            content.push_str(&format!("\n## {heading}\n\n"));
+        }
+    }
+}
+
+/// Append body text to content string with proper newline handling.
+fn append_body(content: &mut String, body: &str) {
+    if body.is_empty() {
+        return;
+    }
+    if !content.ends_with('\n') {
+        content.push('\n');
+    }
+    content.push_str(body);
+    if !body.ends_with('\n') {
+        content.push('\n');
+    }
+}
+
+/// Atomic file write with cleanup on failure.
+fn atomic_write_new(path: &std::path::Path, content: &[u8], relative: &str) -> Result<(), OvError> {
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                OvError::General(format!("Note already exists: {relative}"))
+            } else {
+                OvError::General(format!("Cannot create {relative}: {e}"))
+            }
+        })?;
+
+    if let Err(e) = file.write_all(content).and_then(|_| file.sync_all()) {
+        // Clean up partial file on write failure
+        let _ = std::fs::remove_file(path);
+        return Err(OvError::General(format!("Failed to write {relative}: {e}")));
+    }
+
+    Ok(())
+}
+
 fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
     let vault = open_vault(ctx)?;
+
+    // Sanitize title (reject /, \, \0, .., strip .md suffix)
+    let clean_title = sanitize_title(&args.title)?;
 
     // Determine target directory
     let dir = args.dir.as_deref().unwrap_or_else(|| {
@@ -641,7 +773,7 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
             .unwrap_or("")
     });
 
-    let filename = format!("{}.md", args.title);
+    let filename = format!("{clean_title}.md");
     let relative = if dir.is_empty() {
         filename.clone()
     } else {
@@ -649,36 +781,11 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
     };
     let full_path = vault.root.join(&relative);
 
-    // Path traversal protection: normalize logical path and verify it stays under vault root.
-    {
-        let canonical_root = vault
-            .root
-            .canonicalize()
-            .map_err(|e| OvError::General(e.to_string()))?;
-        let mut normalized = canonical_root.clone();
-        for component in std::path::Path::new(&relative).components() {
-            match component {
-                std::path::Component::ParentDir => {
-                    normalized.pop();
-                }
-                std::path::Component::Normal(c) => {
-                    normalized.push(c);
-                }
-                _ => {} // skip CurDir, Prefix, RootDir
-            }
-        }
-        if !normalized.starts_with(&canonical_root) {
-            return Err(OvError::General(format!(
-                "Path escapes vault boundary: {relative}"
-            )));
-        }
-    }
-
     // Build content
     let mut content = String::new();
 
     if let Some(ref frontmatter_json) = args.frontmatter {
-        // ── Frontmatter path (new): dynamic YAML frontmatter from JSON ──
+        // ── Frontmatter path: dynamic YAML frontmatter from JSON ──
         let mut fm_map: std::collections::BTreeMap<String, serde_json::Value> =
             serde_json::from_str(frontmatter_json).map_err(|e| {
                 OvError::General(format!("Invalid frontmatter JSON: {e}"))
@@ -690,25 +797,25 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
                 .split(',')
                 .map(|t| {
                     let t = t.trim();
-                    let tag = if t.starts_with('#') {
-                        t.to_string()
+                    if t.starts_with('#') {
+                        serde_json::Value::String(t.to_string())
                     } else {
-                        format!("#{t}")
-                    };
-                    serde_json::Value::String(tag)
+                        serde_json::Value::String(format!("#{t}"))
+                    }
                 })
                 .collect();
 
-            fm_map
-                .entry("tags".to_string())
-                .and_modify(|v| {
-                    if let serde_json::Value::Array(arr) = v {
-                        arr.extend(tag_values.clone());
-                    } else {
-                        *v = serde_json::Value::Array(tag_values.clone());
-                    }
-                })
-                .or_insert(serde_json::Value::Array(tag_values));
+            match fm_map.get_mut("tags") {
+                Some(serde_json::Value::Array(arr)) => {
+                    arr.extend(tag_values);
+                }
+                Some(v) => {
+                    *v = serde_json::Value::Array(tag_values);
+                }
+                None => {
+                    fm_map.insert("tags".to_string(), serde_json::Value::Array(tag_values));
+                }
+            }
         }
 
         if !fm_map.is_empty() {
@@ -721,29 +828,8 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
             }
             content.push_str("---\n");
         }
-
-        // Add sections
-        if let Some(ref sections_str) = args.sections {
-            for heading in sections_str.split(',') {
-                let heading = heading.trim();
-                if !heading.is_empty() {
-                    content.push_str(&format!("\n## {heading}\n\n"));
-                }
-            }
-        }
-
-        // Add body content
-        if let Some(ref body) = args.content {
-            if !content.ends_with('\n') {
-                content.push('\n');
-            }
-            content.push_str(body);
-            if !body.ends_with('\n') {
-                content.push('\n');
-            }
-        }
     } else if let Some(ref template_name) = args.template {
-        // ── Template path (existing): read template file + variable substitution ──
+        // ── Template path: read template file + variable substitution ──
         let template_dir = vault
             .obsidian_config
             .template_folder
@@ -753,60 +839,41 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
             .root
             .join(template_dir)
             .join(format!("{template_name}.md"));
-        if template_path.exists() {
-            content = std::fs::read_to_string(&template_path)?;
-            // Replace template variables
-            let now = chrono::Local::now();
-            content = content.replace("{{date:YYYY-MM-DD}}", &now.format("%Y-%m-%d").to_string());
-            content = content.replace("{{time:HH:mm}}", &now.format("%H:%M").to_string());
-            content = content.replace("{{title}}", &args.title);
-
-            // Apply --vars substitutions
-            if let Some(ref vars_str) = args.vars {
-                for pair in vars_str.split(',') {
-                    if let Some((k, v)) = pair.split_once('=') {
-                        let k = k.trim();
-                        let v = v.trim();
-                        content = content.replace(&format!("{{{{{k}}}}}"), v);
-                    }
-                }
-            }
-
-            // Clean remaining {{...}} placeholders (replace with empty string)
-            let placeholder_re = regex::Regex::new(r"\{\{[^}]+\}\}").unwrap();
-            content = placeholder_re.replace_all(&content, "").to_string();
-        } else {
-            eprintln!("Template not found: {template_name}");
+        if !template_path.exists() {
+            return Err(OvError::General(format!(
+                "Template not found: {template_name}"
+            )));
         }
+        content = std::fs::read_to_string(&template_path)?;
 
-        // Append sections after template content
-        if let Some(ref sections_str) = args.sections {
-            for heading in sections_str.split(',') {
-                let heading = heading.trim();
-                if !heading.is_empty() {
-                    content.push_str(&format!("\n## {heading}\n\n"));
+        // Replace template variables
+        let now = chrono::Local::now();
+        content = content.replace("{{date:YYYY-MM-DD}}", &now.format("%Y-%m-%d").to_string());
+        content = content.replace("{{time:HH:mm}}", &now.format("%H:%M").to_string());
+        content = content.replace("{{title}}", &clean_title);
+
+        // Apply --vars substitutions
+        if let Some(ref vars_str) = args.vars {
+            for pair in vars_str.split(',') {
+                if let Some((k, v)) = pair.split_once('=') {
+                    let k = k.trim();
+                    let v = v.trim();
+                    content = content.replace(&format!("{{{{{k}}}}}"), v);
                 }
             }
         }
 
-        // Append body content after template
-        if let Some(ref body) = args.content {
-            if !content.ends_with('\n') {
-                content.push('\n');
-            }
-            content.push_str(body);
-            if !body.ends_with('\n') {
-                content.push('\n');
-            }
-        }
+        // Clean remaining {{...}} placeholders
+        let placeholder_re = regex::Regex::new(r"\{\{[^}]+\}\}").unwrap();
+        content = placeholder_re.replace_all(&content, "").to_string();
     } else {
-        // ── Default path (no template, no frontmatter): simple note ──
-        content.push_str(&format!("# {}\n\n", args.title));
+        // ── Default path: simple note ──
+        content.push_str(&format!("# {clean_title}\n\n"));
         if let Some(ref tags_str) = args.tags {
-            let tags: Vec<&str> = tags_str.split(',').map(|t| t.trim()).collect();
-            let tags_formatted: Vec<String> = tags
-                .iter()
+            let tags_formatted: Vec<String> = tags_str
+                .split(',')
                 .map(|t| {
+                    let t = t.trim();
                     if t.starts_with('#') {
                         t.to_string()
                     } else {
@@ -816,58 +883,42 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
                 .collect();
             content.push_str(&format!("Tags: {}\n\n", tags_formatted.join(" ")));
         }
+    }
 
-        // Add sections
-        if let Some(ref sections_str) = args.sections {
-            for heading in sections_str.split(',') {
-                let heading = heading.trim();
-                if !heading.is_empty() {
-                    content.push_str(&format!("## {heading}\n\n"));
-                }
-            }
-        }
+    // Append sections (works with all paths)
+    if let Some(ref sections_str) = args.sections {
+        append_sections(&mut content, sections_str);
+    }
 
-        // Add body content
-        if let Some(ref body) = args.content {
-            if !content.ends_with('\n') {
-                content.push('\n');
-            }
-            content.push_str(body);
-            if !body.ends_with('\n') {
-                content.push('\n');
-            }
-        }
+    // Append body content (works with all paths)
+    if let Some(ref body) = args.content {
+        append_body(&mut content, body);
     }
 
     // Read from stdin if requested
     if args.stdin {
-        use std::io::Read;
         let mut stdin_content = String::new();
         std::io::stdin().read_to_string(&mut stdin_content)?;
         content.push_str(&stdin_content);
     }
 
-    // Create parent directory if needed (after path traversal check)
+    // Create parent directory if needed
     if let Some(parent) = full_path.parent() {
-        std::fs::create_dir_all(parent)?;
+        std::fs::create_dir_all(parent).map_err(|e| {
+            OvError::General(format!(
+                "Cannot create directory {}: {e}",
+                parent.display()
+            ))
+        })?;
     }
 
-    // Atomic file creation: O_CREAT | O_EXCL via create_new(true)
-    // Single syscall — no TOCTOU race between exists() and write()
-    use std::io::Write;
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&full_path)
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::AlreadyExists {
-                OvError::General(format!("Note already exists: {relative}"))
-            } else {
-                OvError::General(e.to_string())
-            }
-        })?;
-    file.write_all(content.as_bytes())?;
-    file.sync_all()?;
+    // Path safety: logical check + physical symlink check (after mkdir)
+    if let Some(parent) = full_path.parent() {
+        validate_path_safety(&vault.root, &relative, parent)?;
+    }
+
+    // Atomic file creation with cleanup on failure
+    atomic_write_new(&full_path, content.as_bytes(), &relative)?;
 
     if !ctx.quiet {
         eprintln!("Created note: {relative}");
@@ -881,7 +932,7 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
             let data = serde_json::json!({
                 "action": "created",
                 "path": relative,
-                "title": args.title,
+                "title": clean_title,
             });
             let response = ApiResponse::success(&data, 1);
             println!("{}", response.to_json_string());
@@ -901,7 +952,6 @@ fn cmd_append(ctx: &Ctx, args: cli::append::AppendArgs) -> Result<(), OvError> {
     // Read content to append
     let mut new_content = String::new();
     if args.stdin {
-        use std::io::Read;
         std::io::stdin().read_to_string(&mut new_content)?;
     } else if let Some(ref text) = args.content {
         new_content = text.clone();

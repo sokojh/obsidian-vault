@@ -480,3 +480,283 @@ fn test_read_person_note() {
         .stdout(predicate::str::contains("imweb"));
 }
 
+// ─── P0: frontmatter 기본 동작 ──────────────────────────────────────────
+
+#[test]
+fn test_create_with_frontmatter() {
+    let path = vault_path().join("Daily/FrontmatterTest.md");
+    let _ = std::fs::remove_file(&path);
+
+    ov()
+        .args(["create", "FrontmatterTest", "--dir", "Daily",
+               "--frontmatter", r#"{"type":"article","status":"draft"}"#,
+               "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("created"));
+
+    // Read back and verify frontmatter fields
+    ov()
+        .args(["read", "FrontmatterTest", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"type\": \"article\""))
+        .stdout(predicate::str::contains("\"status\": \"draft\""));
+
+    let _ = std::fs::remove_file(&path);
+}
+
+// ─── P0: frontmatter 잘못된 JSON 에러 ───────────────────────────────────
+
+#[test]
+fn test_create_frontmatter_invalid_json() {
+    ov()
+        .args(["create", "BadFm", "--frontmatter", "{broken json"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Invalid frontmatter JSON"));
+}
+
+// ─── P0: path traversal 차단 ────────────────────────────────────────────
+
+#[test]
+fn test_create_path_traversal_blocked() {
+    ov()
+        .args(["create", "EscapeTest", "--dir", "../../tmp"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Path escapes vault boundary"));
+}
+
+// ─── P0: --frontmatter + --template 상호 배타 ──────────────────────────
+
+#[test]
+fn test_create_frontmatter_template_conflict() {
+    ov()
+        .args(["create", "ConflictTest",
+               "--frontmatter", r#"{"type":"note"}"#,
+               "--template", "Person"])
+        .assert()
+        .failure();
+}
+
+// ─── P1: frontmatter + tags 병합 ────────────────────────────────────────
+
+#[test]
+fn test_create_frontmatter_with_tags() {
+    let path = vault_path().join("Daily/FmTagsTest.md");
+    let _ = std::fs::remove_file(&path);
+
+    ov()
+        .args(["create", "FmTagsTest", "--dir", "Daily",
+               "--frontmatter", r#"{"type":"note"}"#,
+               "--tags", "devops,sre",
+               "--format", "json"])
+        .assert()
+        .success();
+
+    // Read raw file to verify tags in YAML frontmatter
+    let content = std::fs::read_to_string(&path).unwrap();
+    assert!(content.contains("#devops"), "should contain #devops tag");
+    assert!(content.contains("#sre"), "should contain #sre tag");
+    assert!(content.contains("type: note"), "should contain type field");
+
+    let _ = std::fs::remove_file(&path);
+}
+
+// ─── P1: --sections 단독 사용 ───────────────────────────────────────────
+
+#[test]
+fn test_create_with_sections_only() {
+    let path = vault_path().join("Daily/SectionsTest.md");
+    let _ = std::fs::remove_file(&path);
+
+    ov()
+        .args(["create", "SectionsTest", "--dir", "Daily",
+               "--sections", "Summary,References",
+               "--format", "json"])
+        .assert()
+        .success();
+
+    ov()
+        .args(["read", "SectionsTest", "--raw"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("## Summary"))
+        .stdout(predicate::str::contains("## References"));
+
+    let _ = std::fs::remove_file(&path);
+}
+
+// ─── P1: --content 단독 사용 ────────────────────────────────────────────
+
+#[test]
+fn test_create_with_content_only() {
+    let path = vault_path().join("Daily/ContentTest.md");
+    let _ = std::fs::remove_file(&path);
+
+    ov()
+        .args(["create", "ContentTest", "--dir", "Daily",
+               "--content", "This is initial content.",
+               "--format", "json"])
+        .assert()
+        .success();
+
+    ov()
+        .args(["read", "ContentTest", "--raw"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("This is initial content."));
+
+    let _ = std::fs::remove_file(&path);
+}
+
+// ─── P1: --template + --sections 조합 ──────────────────────────────────
+
+#[test]
+fn test_create_template_with_sections() {
+    let path = vault_path().join("People/TemplateSectionsTest.md");
+    let _ = std::fs::remove_file(&path);
+
+    ov()
+        .args(["create", "TemplateSectionsTest", "--dir", "People",
+               "--template", "Person",
+               "--sections", "Extra Notes,Follow-ups",
+               "--format", "json"])
+        .assert()
+        .success();
+
+    // Template content + extra sections should both be present
+    ov()
+        .args(["read", "TemplateSectionsTest", "--raw"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("## Timeline"))     // from template
+        .stdout(predicate::str::contains("## Extra Notes"))   // from --sections
+        .stdout(predicate::str::contains("## Follow-ups"));   // from --sections
+
+    let _ = std::fs::remove_file(&path);
+}
+
+// ─── P1: --template + --content 조합 ───────────────────────────────────
+
+#[test]
+fn test_create_template_with_content() {
+    let path = vault_path().join("People/TemplateContentTest.md");
+    let _ = std::fs::remove_file(&path);
+
+    ov()
+        .args(["create", "TemplateContentTest", "--dir", "People",
+               "--template", "Person",
+               "--content", "Extra note appended after template.",
+               "--format", "json"])
+        .assert()
+        .success();
+
+    ov()
+        .args(["read", "TemplateContentTest", "--raw"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Extra note appended after template."));
+
+    let _ = std::fs::remove_file(&path);
+}
+
+// ─── P2: --frontmatter + --sections 조합 ───────────────────────────────
+
+#[test]
+fn test_create_frontmatter_with_sections() {
+    let path = vault_path().join("Daily/FmSectionTest.md");
+    let _ = std::fs::remove_file(&path);
+
+    ov()
+        .args(["create", "FmSectionTest", "--dir", "Daily",
+               "--frontmatter", r#"{"type":"note"}"#,
+               "--sections", "Summary,Notes",
+               "--format", "json"])
+        .assert()
+        .success();
+
+    let content = std::fs::read_to_string(&path).unwrap();
+    assert!(content.contains("---"), "should have YAML frontmatter");
+    assert!(content.contains("## Summary"), "should have Summary section");
+    assert!(content.contains("## Notes"), "should have Notes section");
+
+    let _ = std::fs::remove_file(&path);
+}
+
+// ─── P2: --sections + --content 조합 ───────────────────────────────────
+
+#[test]
+fn test_create_sections_with_content() {
+    let path = vault_path().join("Daily/SectionContentTest.md");
+    let _ = std::fs::remove_file(&path);
+
+    ov()
+        .args(["create", "SectionContentTest", "--dir", "Daily",
+               "--sections", "Summary",
+               "--content", "Body text here.",
+               "--format", "json"])
+        .assert()
+        .success();
+
+    ov()
+        .args(["read", "SectionContentTest", "--raw"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("## Summary"))
+        .stdout(predicate::str::contains("Body text here."));
+
+    let _ = std::fs::remove_file(&path);
+}
+
+// ─── title sanitization 테스트 ──────────────────────────────────────────
+
+#[test]
+fn test_create_title_with_slash_rejected() {
+    ov()
+        .args(["create", "bad/title"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("path separators"));
+}
+
+#[test]
+fn test_create_title_dotdot_rejected() {
+    ov()
+        .args(["create", ".."])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be '.' or '..'"));
+}
+
+#[test]
+fn test_create_title_md_extension_stripped() {
+    let path = vault_path().join("Daily/StripMdTest.md");
+    let _ = std::fs::remove_file(&path);
+
+    // User passes "StripMdTest.md" — should NOT create "StripMdTest.md.md"
+    ov()
+        .args(["create", "StripMdTest.md", "--dir", "Daily", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("StripMdTest"));
+
+    assert!(path.exists(), "StripMdTest.md should exist");
+    assert!(!vault_path().join("Daily/StripMdTest.md.md").exists(),
+            "StripMdTest.md.md should NOT exist");
+
+    let _ = std::fs::remove_file(&path);
+}
+
+// ─── template not found → error ────────────────────────────────────────
+
+#[test]
+fn test_create_template_not_found() {
+    ov()
+        .args(["create", "TemplateNotFoundTest", "--template", "NonExistentTemplate"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Template not found"));
+}
+
