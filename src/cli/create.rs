@@ -20,4 +20,8 @@ pub struct CreateArgs {
     /// Read content from stdin
     #[arg(long)]
     pub stdin: bool,
+
+    /// Template variables (key1=val1,key2=val2)
+    #[arg(long)]
+    pub vars: Option<String>,
 }

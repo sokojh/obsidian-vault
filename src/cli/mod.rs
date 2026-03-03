@@ -1,3 +1,4 @@
+pub mod append;
 pub mod config;
 pub mod create;
 pub mod daily;
@@ -77,6 +78,9 @@ pub enum Command {
 
     /// Configuration management
     Config(config::ConfigArgs),
+
+    /// Append content to an existing note
+    Append(append::AppendArgs),
 
     /// Start MCP server (stdio)
     Mcp(mcp::McpArgs),

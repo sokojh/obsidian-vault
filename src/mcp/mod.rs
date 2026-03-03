@@ -229,6 +229,71 @@ impl OvMcpServer {
         .map_err(|e| e.to_string())
     }
 
+    #[tool(description = "Append content to an existing note. Optionally target a specific section heading.")]
+    async fn vault_append(
+        &self,
+        Parameters(params): Parameters<AppendParams>,
+    ) -> Result<String, String> {
+        let vault = self.open_vault()?;
+        let file_path = vault
+            .resolve_note(&params.note)
+            .map_err(|e| e.to_string())?;
+        let relative = vault.relative_path(&file_path);
+
+        let mut new_content = params.content;
+
+        // Prepend date subheading if requested
+        if params.date == Some(true) {
+            let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+            new_content = format!("### {today}\n{new_content}");
+        }
+
+        // Read existing file
+        let mut file_content =
+            std::fs::read_to_string(&file_path).map_err(|e| e.to_string())?;
+
+        if let Some(ref section) = params.section {
+            let insert_pos = crate::vault::find_section_insert_point(&file_content, section);
+            let prefix = if insert_pos > 0
+                && !file_content[..insert_pos].ends_with("\n\n")
+            {
+                if file_content[..insert_pos].ends_with('\n') {
+                    "\n".to_string()
+                } else {
+                    "\n\n".to_string()
+                }
+            } else {
+                String::new()
+            };
+            let suffix = if insert_pos < file_content.len()
+                && !file_content[insert_pos..].starts_with('\n')
+            {
+                "\n".to_string()
+            } else {
+                String::new()
+            };
+            file_content.insert_str(insert_pos, &format!("{prefix}{new_content}\n{suffix}"));
+        } else {
+            if !file_content.ends_with('\n') {
+                file_content.push('\n');
+            }
+            file_content.push('\n');
+            file_content.push_str(&new_content);
+            if !new_content.ends_with('\n') {
+                file_content.push('\n');
+            }
+        }
+
+        std::fs::write(&file_path, &file_content).map_err(|e| e.to_string())?;
+
+        serde_json::to_string_pretty(&serde_json::json!({
+            "action": "appended",
+            "path": relative,
+            "section": params.section,
+        }))
+        .map_err(|e| e.to_string())
+    }
+
     #[tool(description = "Get statistics about the Obsidian vault (note count, word count, top tags, etc.)")]
     async fn vault_stats(&self) -> Result<String, String> {
         let vault = self.open_vault()?;

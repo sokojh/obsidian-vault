@@ -51,7 +51,27 @@ pub fn build_index(vault: &Vault, force: bool) -> OvResult<BuildResult> {
 
     // Open or create index
     let index = if tantivy_dir.join("meta.json").exists() && !force {
-        Index::open_in_dir(&tantivy_dir).map_err(|e| OvError::General(e.to_string()))?
+        match Index::open_in_dir(&tantivy_dir) {
+            Ok(idx) => {
+                // Verify schema compatibility — if new fields are missing, force rebuild
+                if idx.schema().get_field("note_type").is_err() {
+                    fs::remove_dir_all(&tantivy_dir)?;
+                    fs::create_dir_all(&tantivy_dir)?;
+                    Index::create_in_dir(&tantivy_dir, schema.clone())
+                        .map_err(|e| OvError::General(e.to_string()))?
+                } else {
+                    idx
+                }
+            }
+            Err(_) => {
+                if tantivy_dir.exists() {
+                    fs::remove_dir_all(&tantivy_dir)?;
+                    fs::create_dir_all(&tantivy_dir)?;
+                }
+                Index::create_in_dir(&tantivy_dir, schema.clone())
+                    .map_err(|e| OvError::General(e.to_string()))?
+            }
+        }
     } else {
         // Clean and recreate
         if tantivy_dir.exists() {
@@ -120,6 +140,15 @@ pub fn build_index(vault: &Vault, force: bool) -> OvResult<BuildResult> {
                 doc.add_text(fields.dir, &note.dir);
                 doc.add_text(fields.modified, &mod_str);
                 doc.add_text(fields.hash, &hash);
+
+                // Extract type from frontmatter extra
+                let note_type = note
+                    .frontmatter
+                    .extra
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                doc.add_text(fields.note_type, note_type);
 
                 writer
                     .add_document(doc)

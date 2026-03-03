@@ -79,6 +79,7 @@ fn run(cli: Cli) -> Result<(), OvError> {
         Command::Graph(args) => cmd_graph(&ctx, args),
         Command::Daily(args) => cmd_daily(&ctx, args),
         Command::Create(args) => cmd_create(&ctx, args),
+        Command::Append(args) => cmd_append(&ctx, args),
         Command::Index(args) => cmd_index(&ctx, args),
         Command::Mcp(_) => cmd_mcp(&ctx),
     }
@@ -791,6 +792,21 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
             content = content.replace("{{date:YYYY-MM-DD}}", &now.format("%Y-%m-%d").to_string());
             content = content.replace("{{time:HH:mm}}", &now.format("%H:%M").to_string());
             content = content.replace("{{title}}", &args.title);
+
+            // Apply --vars substitutions
+            if let Some(ref vars_str) = args.vars {
+                for pair in vars_str.split(',') {
+                    if let Some((k, v)) = pair.split_once('=') {
+                        let k = k.trim();
+                        let v = v.trim();
+                        content = content.replace(&format!("{{{{{k}}}}}"), v);
+                    }
+                }
+            }
+
+            // Clean remaining {{...}} placeholders (replace with empty string)
+            let placeholder_re = regex::Regex::new(r"\{\{[^}]+\}\}").unwrap();
+            content = placeholder_re.replace_all(&content, "").to_string();
         } else {
             eprintln!("Template not found: {template_name}");
         }
@@ -850,4 +866,97 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
     }
 
     Ok(())
+}
+
+// ─── append ─────────────────────────────────────────────────────────────
+
+fn cmd_append(ctx: &Ctx, args: cli::append::AppendArgs) -> Result<(), OvError> {
+    let vault = open_vault(ctx)?;
+    let file_path = vault.resolve_note(&args.note)?;
+    let relative = vault.relative_path(&file_path);
+
+    // Read content to append
+    let mut new_content = String::new();
+    if args.stdin {
+        use std::io::Read;
+        std::io::stdin().read_to_string(&mut new_content)?;
+    } else if let Some(ref text) = args.content {
+        new_content = text.clone();
+    } else {
+        return Err(OvError::General(
+            "Either --content or --stdin is required".to_string(),
+        ));
+    }
+
+    // Prepend date subheading if requested
+    if args.date {
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        new_content = format!("### {today}\n{new_content}");
+    }
+
+    // Read existing file
+    let mut file_content = std::fs::read_to_string(&file_path)?;
+
+    // Find insert point
+    if let Some(ref section) = args.section {
+        let insert_pos = find_section_insert_point(&file_content, section);
+        // Ensure proper spacing
+        let prefix = if insert_pos > 0
+            && !file_content[..insert_pos].ends_with("\n\n")
+        {
+            if file_content[..insert_pos].ends_with('\n') {
+                "\n".to_string()
+            } else {
+                "\n\n".to_string()
+            }
+        } else {
+            String::new()
+        };
+        let suffix = if insert_pos < file_content.len()
+            && !file_content[insert_pos..].starts_with('\n')
+        {
+            "\n".to_string()
+        } else {
+            String::new()
+        };
+        file_content.insert_str(insert_pos, &format!("{prefix}{new_content}\n{suffix}"));
+    } else {
+        // Append to end
+        if !file_content.ends_with('\n') {
+            file_content.push('\n');
+        }
+        file_content.push('\n');
+        file_content.push_str(&new_content);
+        if !new_content.ends_with('\n') {
+            file_content.push('\n');
+        }
+    }
+
+    std::fs::write(&file_path, &file_content)?;
+
+    if !ctx.quiet {
+        eprintln!("Appended to: {relative}");
+    }
+
+    match ctx.format {
+        OutputFormat::Human => {
+            println!("Appended to: {relative}");
+        }
+        _ => {
+            let data = serde_json::json!({
+                "action": "appended",
+                "path": relative,
+                "section": args.section,
+            });
+            let response = ApiResponse::success(&data, 1);
+            println!("{}", response.to_json_string());
+        }
+    }
+
+    Ok(())
+}
+
+/// Find the insert point within a section (delegates to vault module).
+fn find_section_insert_point(content: &str, section: &str) -> usize {
+    vault::find_section_insert_point(content, section)
 }

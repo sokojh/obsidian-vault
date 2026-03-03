@@ -175,6 +175,17 @@ fn try_parse_yaml_block(content: &str, _lines: &[&str]) -> Option<(Frontmatter, 
                 }
             }
         }
+
+        // Store additional YAML fields in extra
+        for (key, value) in map {
+            if let serde_yaml::Value::String(k) = key {
+                if k != "title" && k != "tags" {
+                    if let Ok(json_val) = serde_json::to_value(value) {
+                        fm.extra.insert(k.clone(), json_val);
+                    }
+                }
+            }
+        }
     }
 
     // Calculate body start: skip past YAML block + any blank lines

@@ -210,6 +210,9 @@ fn test_vault_not_found() {
 
 #[test]
 fn test_index_build_and_search() {
+    // Clear any stale index first
+    let _ = ov().args(["index", "clear"]).assert();
+
     // Build index
     ov()
         .args(["index", "build"])
@@ -339,5 +342,141 @@ fn test_create_duplicate() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("already exists"));
+}
+
+#[test]
+fn test_append_to_note() {
+    // Create a temporary note
+    ov()
+        .args(["create", "AppendTest", "--dir", "Daily", "--format", "json"])
+        .assert()
+        .success();
+
+    // Append content
+    ov()
+        .args(["append", "AppendTest", "--content", "New content line", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("appended"));
+
+    // Read back and verify
+    ov()
+        .args(["read", "AppendTest", "--raw"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("New content line"));
+
+    // Clean up
+    let path = vault_path().join("Daily/AppendTest.md");
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn test_append_with_section() {
+    // Create a note with a section via template
+    ov()
+        .args(["create", "AppendSectionTest", "--template", "Person", "--dir", "People", "--format", "json"])
+        .assert()
+        .success();
+
+    // Append to Timeline section
+    ov()
+        .args(["append", "AppendSectionTest", "--section", "Timeline", "--content", "Met at conference.", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("appended"));
+
+    // Read and verify content is in the right place
+    ov()
+        .args(["read", "AppendSectionTest", "--raw"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Met at conference."));
+
+    // Clean up
+    let path = vault_path().join("People/AppendSectionTest.md");
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn test_append_with_date() {
+    // Create temp note
+    ov()
+        .args(["create", "AppendDateTest", "--dir", "Daily", "--format", "json"])
+        .assert()
+        .success();
+
+    // Append with date
+    ov()
+        .args(["append", "AppendDateTest", "--date", "--content", "Dated entry.", "--format", "json"])
+        .assert()
+        .success();
+
+    // Verify date heading was added
+    ov()
+        .args(["read", "AppendDateTest", "--raw"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("###"))
+        .stdout(predicate::str::contains("Dated entry."));
+
+    // Clean up
+    let path = vault_path().join("Daily/AppendDateTest.md");
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn test_create_with_person_template() {
+    // Clean up in case of previous failed run
+    let path = vault_path().join("People/TestPerson.md");
+    let _ = std::fs::remove_file(&path);
+
+    ov()
+        .args(["create", "TestPerson", "--template", "Person", "--dir", "People",
+               "--vars", "org=imweb,role=SRE", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("created"));
+
+    // Read and verify template variables were substituted
+    ov()
+        .args(["read", "TestPerson", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"type\": \"person\""))
+        .stdout(predicate::str::contains("\"org\": \"imweb\""))
+        .stdout(predicate::str::contains("\"role\": \"SRE\""))
+        .stdout(predicate::str::contains("Timeline"));
+
+    // Clean up
+    let path = vault_path().join("People/TestPerson.md");
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn test_search_type_prefix() {
+    // Clear any stale index, then build fresh
+    let _ = ov().args(["index", "clear"]).assert();
+    ov()
+        .args(["index", "build"])
+        .assert()
+        .success();
+
+    // Search for type:person — should find 김철수
+    ov()
+        .args(["search", "type:person", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("김철수"));
+}
+
+#[test]
+fn test_read_person_note() {
+    ov()
+        .args(["read", "김철수", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("person"))
+        .stdout(predicate::str::contains("imweb"));
 }
 

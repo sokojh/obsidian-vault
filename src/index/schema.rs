@@ -14,6 +14,7 @@ pub struct IndexFields {
     pub dir: Field,
     pub modified: Field,
     pub hash: Field,
+    pub note_type: Field,
 }
 
 /// Build the tantivy schema
@@ -45,6 +46,7 @@ pub fn build_schema() -> (Schema, IndexFields) {
     let dir = builder.add_text_field("dir", STRING | STORED);
     let modified = builder.add_text_field("modified", STRING | STORED);
     let hash = builder.add_text_field("hash", STORED);
+    let note_type = builder.add_text_field("note_type", STRING | STORED);
 
     let schema = builder.build();
     let fields = IndexFields {
@@ -55,6 +57,7 @@ pub fn build_schema() -> (Schema, IndexFields) {
         dir,
         modified,
         hash,
+        note_type,
     };
 
     (schema, fields)

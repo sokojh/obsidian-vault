@@ -63,6 +63,15 @@ pub fn search(
         });
     }
 
+    if !parsed.types.is_empty() {
+        results.retain(|hit| {
+            parsed
+                .types
+                .iter()
+                .any(|t| hit.note_type.eq_ignore_ascii_case(t))
+        });
+    }
+
     // Apply offset and limit
     let results: Vec<SearchHit> = results.into_iter().skip(offset).take(limit).collect();
 

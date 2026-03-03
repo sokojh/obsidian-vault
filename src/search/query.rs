@@ -18,6 +18,8 @@ pub struct ParsedQuery {
     pub titles: Vec<String>,
     /// date: filter
     pub dates: Vec<String>,
+    /// type: filter (frontmatter type field)
+    pub types: Vec<String>,
 }
 
 /// Parse a user query, extracting tag:, in:, title:, date: prefixes
@@ -26,6 +28,7 @@ pub fn parse_query(input: &str) -> ParsedQuery {
     let mut dirs = Vec::new();
     let mut titles = Vec::new();
     let mut dates = Vec::new();
+    let mut types = Vec::new();
 
     // Process each word
     let mut remaining = input.to_string();
@@ -57,6 +60,10 @@ pub fn parse_query(input: &str) -> ParsedQuery {
                 dates.push(value.to_string());
                 remaining = remaining.replace(full_match, "");
             }
+            "type" => {
+                types.push(value.to_string());
+                remaining = remaining.replace(full_match, "");
+            }
             _ => {
                 // Not a known prefix, keep as text
             }
@@ -71,6 +78,7 @@ pub fn parse_query(input: &str) -> ParsedQuery {
         dirs,
         titles,
         dates,
+        types,
     }
 }
 
@@ -105,5 +113,19 @@ mod tests {
         let q = parse_query("date:2024-01 notes");
         assert_eq!(q.dates, vec!["2024-01"]);
         assert!(q.text.contains("notes"));
+    }
+
+    #[test]
+    fn test_parse_type_prefix() {
+        let q = parse_query("type:person");
+        assert_eq!(q.types, vec!["person"]);
+        assert!(q.text.is_empty());
+    }
+
+    #[test]
+    fn test_parse_type_with_text() {
+        let q = parse_query("type:person 김철수");
+        assert_eq!(q.types, vec!["person"]);
+        assert!(q.text.contains("김철수"));
     }
 }

@@ -5,10 +5,37 @@ use std::path::{Path, PathBuf};
 
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
+use regex::Regex;
 
 use crate::error::{OvError, OvResult};
 use crate::extract;
 use crate::model::note::Note;
+
+/// Find the byte offset to insert content within a named section.
+/// If the section is found, returns the position just before the next same-or-higher level heading.
+/// If no such heading exists, returns content.len() (file end).
+/// If the section is not found, returns content.len().
+pub fn find_section_insert_point(content: &str, section: &str) -> usize {
+    let heading_re = Regex::new(r"(?m)^(#{1,6})\s+(.+)$").unwrap();
+
+    let mut section_level: Option<usize> = None;
+
+    for cap in heading_re.captures_iter(content) {
+        let level = cap[1].len();
+        let heading_text = cap[2].trim();
+        let match_start = cap.get(0).unwrap().start();
+
+        if section_level.is_none() {
+            if heading_text.eq_ignore_ascii_case(section) {
+                section_level = Some(level);
+            }
+        } else if level <= section_level.unwrap() {
+            return match_start;
+        }
+    }
+
+    content.len()
+}
 
 pub struct Vault {
     pub root: PathBuf,

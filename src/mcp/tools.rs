@@ -58,3 +58,16 @@ pub struct BacklinksParams {
     /// Include context line
     pub context: Option<bool>,
 }
+
+/// Parameters for vault_append tool
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AppendParams {
+    /// Note name or path (fuzzy matching supported)
+    pub note: String,
+    /// Content to append
+    pub content: String,
+    /// Target section heading (e.g., "Timeline", "Notes")
+    pub section: Option<String>,
+    /// Add date subheading (### YYYY-MM-DD)
+    pub date: Option<bool>,
+}

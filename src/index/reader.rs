@@ -19,6 +19,7 @@ pub struct SearchHit {
     pub modified: String,
     pub score: f32,
     pub snippet: Option<String>,
+    pub note_type: String,
 }
 
 /// Open the index for reading and execute a query
@@ -106,6 +107,8 @@ pub fn search(
             snippet.to_html()
         });
 
+        let note_type = get_field_text(&doc, &fields.note_type);
+
         results.push(SearchHit {
             path,
             title,
@@ -114,6 +117,7 @@ pub fn search(
             modified,
             score: *score,
             snippet,
+            note_type,
         });
     }
 
