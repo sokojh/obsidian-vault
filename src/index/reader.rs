@@ -39,13 +39,13 @@ pub fn search(
     }
 
     let (_schema, fields) = super::schema::build_schema();
-    let index =
-        Index::open_in_dir(&tantivy_dir).map_err(|e| OvError::General(e.to_string()))?;
+    let index = Index::open_in_dir(&tantivy_dir).map_err(|e| OvError::General(e.to_string()))?;
 
     // Register tokenizer
-    index
-        .tokenizers()
-        .register(tokenizer::tokenizer_name(), tokenizer::build_text_analyzer());
+    index.tokenizers().register(
+        tokenizer::tokenizer_name(),
+        tokenizer::build_text_analyzer(),
+    );
 
     let reader = index
         .reader_builder()
@@ -168,9 +168,10 @@ pub fn read_all_from_index(vault_root: &Path) -> Option<Vec<NoteSummary>> {
 
     let (_schema, fields) = super::schema::build_schema();
 
-    index
-        .tokenizers()
-        .register(tokenizer::tokenizer_name(), tokenizer::build_text_analyzer());
+    index.tokenizers().register(
+        tokenizer::tokenizer_name(),
+        tokenizer::build_text_analyzer(),
+    );
 
     let reader = index
         .reader_builder()

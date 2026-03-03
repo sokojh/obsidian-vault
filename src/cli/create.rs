@@ -1,8 +1,7 @@
 use clap::Args;
 
 #[derive(Args)]
-#[command(
-    after_long_help = "\x1b[1mCreation Modes:\x1b[0m
+#[command(after_long_help = "\x1b[1mCreation Modes:\x1b[0m
   1. Plain (default):     ov create \"Title\" --tags \"tag1,tag2\"
   2. Frontmatter (JSON):  ov create \"Title\" --frontmatter '{\"type\":\"study\"}' --tags \"tag1\"
   3. Template-based:      ov create \"Title\" --template \"Core Zettel Template\"
@@ -28,8 +27,7 @@ use clap::Args;
   ov create \"논문 요약\" --dir Clippings --tags \"clippings,AI\"
 
   # Pipe content from stdin
-  echo \"Body text\" | ov create \"My Note\" --stdin"
-)]
+  echo \"Body text\" | ov create \"My Note\" --stdin")]
 pub struct CreateArgs {
     /// Note title (becomes filename and # heading)
     pub title: String,

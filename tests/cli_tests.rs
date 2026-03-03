@@ -14,8 +14,7 @@ fn ov() -> Command {
 
 #[test]
 fn test_list_json() {
-    ov()
-        .args(["list", "--format", "json"])
+    ov().args(["list", "--format", "json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("\"ok\": true"))
@@ -24,8 +23,7 @@ fn test_list_json() {
 
 #[test]
 fn test_list_human() {
-    ov()
-        .args(["list"])
+    ov().args(["list"])
         .assert()
         .success()
         .stdout(predicate::str::contains("notes"));
@@ -33,8 +31,7 @@ fn test_list_human() {
 
 #[test]
 fn test_list_filter_dir() {
-    ov()
-        .args(["list", "--dir", "Zettelkasten", "--format", "json"])
+    ov().args(["list", "--dir", "Zettelkasten", "--format", "json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("kubernetes-basics"))
@@ -43,8 +40,7 @@ fn test_list_filter_dir() {
 
 #[test]
 fn test_list_filter_tag() {
-    ov()
-        .args(["list", "--tag", "#TDD", "--format", "json"])
+    ov().args(["list", "--tag", "#TDD", "--format", "json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("tdd-article"));
@@ -52,8 +48,7 @@ fn test_list_filter_tag() {
 
 #[test]
 fn test_list_sort_title() {
-    ov()
-        .args(["list", "--sort", "title", "--format", "json"])
+    ov().args(["list", "--sort", "title", "--format", "json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("\"ok\": true"));
@@ -61,16 +56,14 @@ fn test_list_sort_title() {
 
 #[test]
 fn test_list_limit() {
-    ov()
-        .args(["list", "--limit", "2", "--format", "json"])
+    ov().args(["list", "--limit", "2", "--format", "json"])
         .assert()
         .success();
 }
 
 #[test]
 fn test_read_exact() {
-    ov()
-        .args(["read", "docker", "--format", "json"])
+    ov().args(["read", "docker", "--format", "json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Docker"))
@@ -79,8 +72,7 @@ fn test_read_exact() {
 
 #[test]
 fn test_read_fuzzy() {
-    ov()
-        .args(["read", "kube", "--format", "json"])
+    ov().args(["read", "kube", "--format", "json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Kubernetes"));
@@ -88,8 +80,7 @@ fn test_read_fuzzy() {
 
 #[test]
 fn test_read_raw() {
-    ov()
-        .args(["read", "docker", "--raw"])
+    ov().args(["read", "docker", "--raw"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Docker is a containerization"));
@@ -97,16 +88,14 @@ fn test_read_raw() {
 
 #[test]
 fn test_read_not_found() {
-    ov()
-        .args(["read", "nonexistent_note_xyz", "--format", "json"])
+    ov().args(["read", "nonexistent_note_xyz", "--format", "json"])
         .assert()
         .failure();
 }
 
 #[test]
 fn test_tags_json() {
-    ov()
-        .args(["tags", "--format", "json"])
+    ov().args(["tags", "--format", "json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("#devops"))
@@ -115,8 +104,7 @@ fn test_tags_json() {
 
 #[test]
 fn test_tags_sort_name() {
-    ov()
-        .args(["tags", "--sort", "name", "--format", "json"])
+    ov().args(["tags", "--sort", "name", "--format", "json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("\"ok\": true"));
@@ -124,16 +112,14 @@ fn test_tags_sort_name() {
 
 #[test]
 fn test_tags_min_count() {
-    ov()
-        .args(["tags", "--min-count", "2", "--format", "json"])
+    ov().args(["tags", "--min-count", "2", "--format", "json"])
         .assert()
         .success();
 }
 
 #[test]
 fn test_stats_json() {
-    ov()
-        .args(["stats", "--format", "json"])
+    ov().args(["stats", "--format", "json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("total_notes"))
@@ -143,8 +129,7 @@ fn test_stats_json() {
 
 #[test]
 fn test_stats_human() {
-    ov()
-        .args(["stats"])
+    ov().args(["stats"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Vault Statistics"));
@@ -152,8 +137,7 @@ fn test_stats_human() {
 
 #[test]
 fn test_links() {
-    ov()
-        .args(["links", "kubernetes-basics", "--format", "json"])
+    ov().args(["links", "kubernetes-basics", "--format", "json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Docker"))
@@ -162,27 +146,25 @@ fn test_links() {
 
 #[test]
 fn test_backlinks() {
-    ov()
-        .args(["backlinks", "docker", "--format", "json"])
+    ov().args(["backlinks", "docker", "--format", "json"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("kubernetes-basics").or(
-            predicate::str::contains("container-networking"),
-        ));
+        .stdout(
+            predicate::str::contains("kubernetes-basics")
+                .or(predicate::str::contains("container-networking")),
+        );
 }
 
 #[test]
 fn test_backlinks_with_context() {
-    ov()
-        .args(["backlinks", "docker", "--context", "--format", "json"])
+    ov().args(["backlinks", "docker", "--context", "--format", "json"])
         .assert()
         .success();
 }
 
 #[test]
 fn test_config_show() {
-    ov()
-        .args(["config", "--format", "json"])
+    ov().args(["config", "--format", "json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("\"ok\": true"));
@@ -190,8 +172,7 @@ fn test_config_show() {
 
 #[test]
 fn test_fields_selector() {
-    ov()
-        .args(["list", "--format", "json", "--fields", "title,tags"])
+    ov().args(["list", "--format", "json", "--fields", "title,tags"])
         .assert()
         .success()
         .stdout(predicate::str::contains("title"));
@@ -207,62 +188,49 @@ fn test_vault_not_found() {
         .stderr(predicate::str::contains("Vault not found"));
 }
 
-
 #[test]
 fn test_index_build_and_search() {
     // Clear any stale index first
     let _ = ov().args(["index", "clear"]).assert();
 
     // Build index
-    ov()
-        .args(["index", "build"])
-        .assert()
-        .success();
+    ov().args(["index", "build"]).assert().success();
 
     // Check status
-    ov()
-        .args(["index", "status", "--format", "json"])
+    ov().args(["index", "status", "--format", "json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("\"exists\": true"));
 
     // Search
-    ov()
-        .args(["search", "kubernetes", "--format", "json"])
+    ov().args(["search", "kubernetes", "--format", "json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("kubernetes"));
 
     // Search with snippet
-    ov()
-        .args(["search", "Docker", "--snippet", "--format", "json"])
+    ov().args(["search", "Docker", "--snippet", "--format", "json"])
         .assert()
         .success();
 
     // Search with tag prefix
-    ov()
-        .args(["search", "tag:#devops container", "--format", "json"])
+    ov().args(["search", "tag:#devops container", "--format", "json"])
         .assert()
         .success();
 
     // Search with no results
-    ov()
-        .args(["search", "xyznonexistent12345"])
+    ov().args(["search", "xyznonexistent12345"])
         .assert()
         .success()
         .stdout(predicate::str::contains("No results found"));
 
     // Clear index
-    ov()
-        .args(["index", "clear"])
-        .assert()
-        .success();
+    ov().args(["index", "clear"]).assert().success();
 }
 
 #[test]
 fn test_graph_json() {
-    ov()
-        .args(["graph", "--format", "json"])
+    ov().args(["graph", "--format", "json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("nodes"))
@@ -271,17 +239,17 @@ fn test_graph_json() {
 
 #[test]
 fn test_graph_center() {
-    ov()
-        .args(["graph", "--center", "docker", "--depth", "1", "--format", "json"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("docker"));
+    ov().args([
+        "graph", "--center", "docker", "--depth", "1", "--format", "json",
+    ])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains("docker"));
 }
 
 #[test]
 fn test_graph_dot() {
-    ov()
-        .args(["graph", "--graph-format", "dot"])
+    ov().args(["graph", "--graph-format", "dot"])
         .assert()
         .success()
         .stdout(predicate::str::contains("digraph vault"));
@@ -289,8 +257,7 @@ fn test_graph_dot() {
 
 #[test]
 fn test_graph_mermaid() {
-    ov()
-        .args(["graph", "--graph-format", "mermaid"])
+    ov().args(["graph", "--graph-format", "mermaid"])
         .assert()
         .success()
         .stdout(predicate::str::contains("graph LR"));
@@ -298,8 +265,7 @@ fn test_graph_mermaid() {
 
 #[test]
 fn test_daily_dry_run() {
-    ov()
-        .args(["daily", "--dry-run", "--format", "json"])
+    ov().args(["daily", "--dry-run", "--format", "json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("dry_run"));
@@ -307,8 +273,7 @@ fn test_daily_dry_run() {
 
 #[test]
 fn test_daily_existing() {
-    ov()
-        .args(["daily", "--date", "2024-01-15"])
+    ov().args(["daily", "--date", "2024-01-15"])
         .assert()
         .success()
         .stdout(predicate::str::contains("2024-01-15"));
@@ -317,15 +282,22 @@ fn test_daily_existing() {
 #[test]
 fn test_create_and_read() {
     // Create a new note
-    ov()
-        .args(["create", "Test Note", "--dir", "Daily", "--tags", "test,tmp", "--format", "json"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("created"));
+    ov().args([
+        "create",
+        "Test Note",
+        "--dir",
+        "Daily",
+        "--tags",
+        "test,tmp",
+        "--format",
+        "json",
+    ])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains("created"));
 
     // Read it back
-    ov()
-        .args(["read", "Test Note", "--format", "json"])
+    ov().args(["read", "Test Note", "--format", "json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Test Note"));
@@ -337,8 +309,7 @@ fn test_create_and_read() {
 
 #[test]
 fn test_create_duplicate() {
-    ov()
-        .args(["create", "docker", "--dir", "Zettelkasten"])
+    ov().args(["create", "docker", "--dir", "Zettelkasten"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("already exists"));
@@ -347,21 +318,25 @@ fn test_create_duplicate() {
 #[test]
 fn test_append_to_note() {
     // Create a temporary note
-    ov()
-        .args(["create", "AppendTest", "--dir", "Daily", "--format", "json"])
+    ov().args(["create", "AppendTest", "--dir", "Daily", "--format", "json"])
         .assert()
         .success();
 
     // Append content
-    ov()
-        .args(["append", "AppendTest", "--content", "New content line", "--format", "json"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("appended"));
+    ov().args([
+        "append",
+        "AppendTest",
+        "--content",
+        "New content line",
+        "--format",
+        "json",
+    ])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains("appended"));
 
     // Read back and verify
-    ov()
-        .args(["read", "AppendTest", "--raw"])
+    ov().args(["read", "AppendTest", "--raw"])
         .assert()
         .success()
         .stdout(predicate::str::contains("New content line"));
@@ -374,21 +349,36 @@ fn test_append_to_note() {
 #[test]
 fn test_append_with_section() {
     // Create a note with a section via template
-    ov()
-        .args(["create", "AppendSectionTest", "--template", "Person", "--dir", "People", "--format", "json"])
-        .assert()
-        .success();
+    ov().args([
+        "create",
+        "AppendSectionTest",
+        "--template",
+        "Person",
+        "--dir",
+        "People",
+        "--format",
+        "json",
+    ])
+    .assert()
+    .success();
 
     // Append to Timeline section
-    ov()
-        .args(["append", "AppendSectionTest", "--section", "Timeline", "--content", "Met at conference.", "--format", "json"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("appended"));
+    ov().args([
+        "append",
+        "AppendSectionTest",
+        "--section",
+        "Timeline",
+        "--content",
+        "Met at conference.",
+        "--format",
+        "json",
+    ])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains("appended"));
 
     // Read and verify content is in the right place
-    ov()
-        .args(["read", "AppendSectionTest", "--raw"])
+    ov().args(["read", "AppendSectionTest", "--raw"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Met at conference."));
@@ -401,20 +391,32 @@ fn test_append_with_section() {
 #[test]
 fn test_append_with_date() {
     // Create temp note
-    ov()
-        .args(["create", "AppendDateTest", "--dir", "Daily", "--format", "json"])
-        .assert()
-        .success();
+    ov().args([
+        "create",
+        "AppendDateTest",
+        "--dir",
+        "Daily",
+        "--format",
+        "json",
+    ])
+    .assert()
+    .success();
 
     // Append with date
-    ov()
-        .args(["append", "AppendDateTest", "--date", "--content", "Dated entry.", "--format", "json"])
-        .assert()
-        .success();
+    ov().args([
+        "append",
+        "AppendDateTest",
+        "--date",
+        "--content",
+        "Dated entry.",
+        "--format",
+        "json",
+    ])
+    .assert()
+    .success();
 
     // Verify date heading was added
-    ov()
-        .args(["read", "AppendDateTest", "--raw"])
+    ov().args(["read", "AppendDateTest", "--raw"])
         .assert()
         .success()
         .stdout(predicate::str::contains("###"))
@@ -431,16 +433,24 @@ fn test_create_with_person_template() {
     let path = vault_path().join("People/TestPerson.md");
     let _ = std::fs::remove_file(&path);
 
-    ov()
-        .args(["create", "TestPerson", "--template", "Person", "--dir", "People",
-               "--vars", "org=imweb,role=SRE", "--format", "json"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("created"));
+    ov().args([
+        "create",
+        "TestPerson",
+        "--template",
+        "Person",
+        "--dir",
+        "People",
+        "--vars",
+        "org=imweb,role=SRE",
+        "--format",
+        "json",
+    ])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains("created"));
 
     // Read and verify template variables were substituted
-    ov()
-        .args(["read", "TestPerson", "--format", "json"])
+    ov().args(["read", "TestPerson", "--format", "json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("\"type\": \"person\""))
@@ -457,14 +467,10 @@ fn test_create_with_person_template() {
 fn test_search_type_prefix() {
     // Clear any stale index, then build fresh
     let _ = ov().args(["index", "clear"]).assert();
-    ov()
-        .args(["index", "build"])
-        .assert()
-        .success();
+    ov().args(["index", "build"]).assert().success();
 
     // Search for type:person — should find 김철수
-    ov()
-        .args(["search", "type:person", "--format", "json"])
+    ov().args(["search", "type:person", "--format", "json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("김철수"));
@@ -472,8 +478,7 @@ fn test_search_type_prefix() {
 
 #[test]
 fn test_read_person_note() {
-    ov()
-        .args(["read", "김철수", "--format", "json"])
+    ov().args(["read", "김철수", "--format", "json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("person"))
@@ -487,17 +492,22 @@ fn test_create_with_frontmatter() {
     let path = vault_path().join("Daily/FrontmatterTest.md");
     let _ = std::fs::remove_file(&path);
 
-    ov()
-        .args(["create", "FrontmatterTest", "--dir", "Daily",
-               "--frontmatter", r#"{"type":"article","status":"draft"}"#,
-               "--format", "json"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("created"));
+    ov().args([
+        "create",
+        "FrontmatterTest",
+        "--dir",
+        "Daily",
+        "--frontmatter",
+        r#"{"type":"article","status":"draft"}"#,
+        "--format",
+        "json",
+    ])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains("created"));
 
     // Read back and verify frontmatter fields
-    ov()
-        .args(["read", "FrontmatterTest", "--format", "json"])
+    ov().args(["read", "FrontmatterTest", "--format", "json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("\"type\": \"article\""))
@@ -510,8 +520,7 @@ fn test_create_with_frontmatter() {
 
 #[test]
 fn test_create_frontmatter_invalid_json() {
-    ov()
-        .args(["create", "BadFm", "--frontmatter", "{broken json"])
+    ov().args(["create", "BadFm", "--frontmatter", "{broken json"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("Invalid frontmatter JSON"));
@@ -521,8 +530,7 @@ fn test_create_frontmatter_invalid_json() {
 
 #[test]
 fn test_create_path_traversal_blocked() {
-    ov()
-        .args(["create", "EscapeTest", "--dir", "../../tmp"])
+    ov().args(["create", "EscapeTest", "--dir", "../../tmp"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("Path escapes vault boundary"));
@@ -532,12 +540,16 @@ fn test_create_path_traversal_blocked() {
 
 #[test]
 fn test_create_frontmatter_template_conflict() {
-    ov()
-        .args(["create", "ConflictTest",
-               "--frontmatter", r#"{"type":"note"}"#,
-               "--template", "Person"])
-        .assert()
-        .failure();
+    ov().args([
+        "create",
+        "ConflictTest",
+        "--frontmatter",
+        r#"{"type":"note"}"#,
+        "--template",
+        "Person",
+    ])
+    .assert()
+    .failure();
 }
 
 // ─── P1: frontmatter + tags 병합 ────────────────────────────────────────
@@ -547,13 +559,20 @@ fn test_create_frontmatter_with_tags() {
     let path = vault_path().join("Daily/FmTagsTest.md");
     let _ = std::fs::remove_file(&path);
 
-    ov()
-        .args(["create", "FmTagsTest", "--dir", "Daily",
-               "--frontmatter", r#"{"type":"note"}"#,
-               "--tags", "devops,sre",
-               "--format", "json"])
-        .assert()
-        .success();
+    ov().args([
+        "create",
+        "FmTagsTest",
+        "--dir",
+        "Daily",
+        "--frontmatter",
+        r#"{"type":"note"}"#,
+        "--tags",
+        "devops,sre",
+        "--format",
+        "json",
+    ])
+    .assert()
+    .success();
 
     // Read raw file to verify tags in YAML frontmatter
     let content = std::fs::read_to_string(&path).unwrap();
@@ -571,15 +590,20 @@ fn test_create_with_sections_only() {
     let path = vault_path().join("Daily/SectionsTest.md");
     let _ = std::fs::remove_file(&path);
 
-    ov()
-        .args(["create", "SectionsTest", "--dir", "Daily",
-               "--sections", "Summary,References",
-               "--format", "json"])
-        .assert()
-        .success();
+    ov().args([
+        "create",
+        "SectionsTest",
+        "--dir",
+        "Daily",
+        "--sections",
+        "Summary,References",
+        "--format",
+        "json",
+    ])
+    .assert()
+    .success();
 
-    ov()
-        .args(["read", "SectionsTest", "--raw"])
+    ov().args(["read", "SectionsTest", "--raw"])
         .assert()
         .success()
         .stdout(predicate::str::contains("## Summary"))
@@ -595,15 +619,20 @@ fn test_create_with_content_only() {
     let path = vault_path().join("Daily/ContentTest.md");
     let _ = std::fs::remove_file(&path);
 
-    ov()
-        .args(["create", "ContentTest", "--dir", "Daily",
-               "--content", "This is initial content.",
-               "--format", "json"])
-        .assert()
-        .success();
+    ov().args([
+        "create",
+        "ContentTest",
+        "--dir",
+        "Daily",
+        "--content",
+        "This is initial content.",
+        "--format",
+        "json",
+    ])
+    .assert()
+    .success();
 
-    ov()
-        .args(["read", "ContentTest", "--raw"])
+    ov().args(["read", "ContentTest", "--raw"])
         .assert()
         .success()
         .stdout(predicate::str::contains("This is initial content."));
@@ -618,22 +647,28 @@ fn test_create_template_with_sections() {
     let path = vault_path().join("People/TemplateSectionsTest.md");
     let _ = std::fs::remove_file(&path);
 
-    ov()
-        .args(["create", "TemplateSectionsTest", "--dir", "People",
-               "--template", "Person",
-               "--sections", "Extra Notes,Follow-ups",
-               "--format", "json"])
-        .assert()
-        .success();
+    ov().args([
+        "create",
+        "TemplateSectionsTest",
+        "--dir",
+        "People",
+        "--template",
+        "Person",
+        "--sections",
+        "Extra Notes,Follow-ups",
+        "--format",
+        "json",
+    ])
+    .assert()
+    .success();
 
     // Template content + extra sections should both be present
-    ov()
-        .args(["read", "TemplateSectionsTest", "--raw"])
+    ov().args(["read", "TemplateSectionsTest", "--raw"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("## Timeline"))     // from template
-        .stdout(predicate::str::contains("## Extra Notes"))   // from --sections
-        .stdout(predicate::str::contains("## Follow-ups"));   // from --sections
+        .stdout(predicate::str::contains("## Timeline")) // from template
+        .stdout(predicate::str::contains("## Extra Notes")) // from --sections
+        .stdout(predicate::str::contains("## Follow-ups")); // from --sections
 
     let _ = std::fs::remove_file(&path);
 }
@@ -645,19 +680,27 @@ fn test_create_template_with_content() {
     let path = vault_path().join("People/TemplateContentTest.md");
     let _ = std::fs::remove_file(&path);
 
-    ov()
-        .args(["create", "TemplateContentTest", "--dir", "People",
-               "--template", "Person",
-               "--content", "Extra note appended after template.",
-               "--format", "json"])
-        .assert()
-        .success();
+    ov().args([
+        "create",
+        "TemplateContentTest",
+        "--dir",
+        "People",
+        "--template",
+        "Person",
+        "--content",
+        "Extra note appended after template.",
+        "--format",
+        "json",
+    ])
+    .assert()
+    .success();
 
-    ov()
-        .args(["read", "TemplateContentTest", "--raw"])
+    ov().args(["read", "TemplateContentTest", "--raw"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Extra note appended after template."));
+        .stdout(predicate::str::contains(
+            "Extra note appended after template.",
+        ));
 
     let _ = std::fs::remove_file(&path);
 }
@@ -669,17 +712,27 @@ fn test_create_frontmatter_with_sections() {
     let path = vault_path().join("Daily/FmSectionTest.md");
     let _ = std::fs::remove_file(&path);
 
-    ov()
-        .args(["create", "FmSectionTest", "--dir", "Daily",
-               "--frontmatter", r#"{"type":"note"}"#,
-               "--sections", "Summary,Notes",
-               "--format", "json"])
-        .assert()
-        .success();
+    ov().args([
+        "create",
+        "FmSectionTest",
+        "--dir",
+        "Daily",
+        "--frontmatter",
+        r#"{"type":"note"}"#,
+        "--sections",
+        "Summary,Notes",
+        "--format",
+        "json",
+    ])
+    .assert()
+    .success();
 
     let content = std::fs::read_to_string(&path).unwrap();
     assert!(content.contains("---"), "should have YAML frontmatter");
-    assert!(content.contains("## Summary"), "should have Summary section");
+    assert!(
+        content.contains("## Summary"),
+        "should have Summary section"
+    );
     assert!(content.contains("## Notes"), "should have Notes section");
 
     let _ = std::fs::remove_file(&path);
@@ -692,16 +745,22 @@ fn test_create_sections_with_content() {
     let path = vault_path().join("Daily/SectionContentTest.md");
     let _ = std::fs::remove_file(&path);
 
-    ov()
-        .args(["create", "SectionContentTest", "--dir", "Daily",
-               "--sections", "Summary",
-               "--content", "Body text here.",
-               "--format", "json"])
-        .assert()
-        .success();
+    ov().args([
+        "create",
+        "SectionContentTest",
+        "--dir",
+        "Daily",
+        "--sections",
+        "Summary",
+        "--content",
+        "Body text here.",
+        "--format",
+        "json",
+    ])
+    .assert()
+    .success();
 
-    ov()
-        .args(["read", "SectionContentTest", "--raw"])
+    ov().args(["read", "SectionContentTest", "--raw"])
         .assert()
         .success()
         .stdout(predicate::str::contains("## Summary"))
@@ -714,8 +773,7 @@ fn test_create_sections_with_content() {
 
 #[test]
 fn test_create_title_with_slash_rejected() {
-    ov()
-        .args(["create", "bad/title"])
+    ov().args(["create", "bad/title"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("path separators"));
@@ -723,8 +781,7 @@ fn test_create_title_with_slash_rejected() {
 
 #[test]
 fn test_create_title_dotdot_rejected() {
-    ov()
-        .args(["create", ".."])
+    ov().args(["create", ".."])
         .assert()
         .failure()
         .stderr(predicate::str::contains("cannot be '.' or '..'"));
@@ -736,15 +793,23 @@ fn test_create_title_md_extension_stripped() {
     let _ = std::fs::remove_file(&path);
 
     // User passes "StripMdTest.md" — should NOT create "StripMdTest.md.md"
-    ov()
-        .args(["create", "StripMdTest.md", "--dir", "Daily", "--format", "json"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("StripMdTest"));
+    ov().args([
+        "create",
+        "StripMdTest.md",
+        "--dir",
+        "Daily",
+        "--format",
+        "json",
+    ])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains("StripMdTest"));
 
     assert!(path.exists(), "StripMdTest.md should exist");
-    assert!(!vault_path().join("Daily/StripMdTest.md.md").exists(),
-            "StripMdTest.md.md should NOT exist");
+    assert!(
+        !vault_path().join("Daily/StripMdTest.md.md").exists(),
+        "StripMdTest.md.md should NOT exist"
+    );
 
     let _ = std::fs::remove_file(&path);
 }
@@ -753,10 +818,13 @@ fn test_create_title_md_extension_stripped() {
 
 #[test]
 fn test_create_template_not_found() {
-    ov()
-        .args(["create", "TemplateNotFoundTest", "--template", "NonExistentTemplate"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("Template not found"));
+    ov().args([
+        "create",
+        "TemplateNotFoundTest",
+        "--template",
+        "NonExistentTemplate",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("Template not found"));
 }
-

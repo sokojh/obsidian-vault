@@ -1,14 +1,12 @@
 use clap::Args;
 
 #[derive(Args)]
-#[command(
-    after_long_help = "\x1b[1mExamples:\x1b[0m
+#[command(after_long_help = "\x1b[1mExamples:\x1b[0m
   ov list --format json                          # All notes, newest first
   ov list --dir Zettelkasten --tag \"#troubleshooting\" --limit 10
   ov list --date today                           # Notes modified today
   ov list --date this-week --sort title          # This week, alphabetical
-  ov list --sort words --reverse --limit 5       # Top 5 longest notes"
-)]
+  ov list --sort words --reverse --limit 5       # Top 5 longest notes")]
 pub struct ListArgs {
     /// Filter by directory name (e.g., "Zettelkasten", "Clippings")
     #[arg(long)]

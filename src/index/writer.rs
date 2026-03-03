@@ -87,9 +87,10 @@ pub fn build_index(vault: &Vault, force: bool) -> OvResult<BuildResult> {
     };
 
     // Register tokenizer
-    index
-        .tokenizers()
-        .register(tokenizer::tokenizer_name(), tokenizer::build_text_analyzer());
+    index.tokenizers().register(
+        tokenizer::tokenizer_name(),
+        tokenizer::build_text_analyzer(),
+    );
 
     let mut writer: IndexWriter = index
         .writer(50_000_000)
@@ -105,7 +106,10 @@ pub fn build_index(vault: &Vault, force: bool) -> OvResult<BuildResult> {
 
         // Check if file changed (incremental)
         if let Ok(metadata) = fs::metadata(file) {
-            let modified: chrono::DateTime<chrono::Local> = metadata.modified().unwrap().into();
+            let modified: chrono::DateTime<chrono::Local> = match metadata.modified() {
+                Ok(t) => t.into(),
+                Err(_) => chrono::Local::now(),
+            };
             let mod_str = modified.to_rfc3339();
             let size = metadata.len();
 
@@ -120,11 +124,7 @@ pub fn build_index(vault: &Vault, force: bool) -> OvResult<BuildResult> {
 
             // Need to index this file
             if let Ok(note) = extract::extract_note(&vault.root, file) {
-                let hash = note
-                    .file_meta
-                    .hash
-                    .clone()
-                    .unwrap_or_default();
+                let hash = note.file_meta.hash.clone().unwrap_or_default();
 
                 // Delete old document if it exists (for updates)
                 let path_term = tantivy::Term::from_field_text(fields.path, &relative);
@@ -134,10 +134,7 @@ pub fn build_index(vault: &Vault, force: bool) -> OvResult<BuildResult> {
                 let mut doc = tantivy::TantivyDocument::new();
                 doc.add_text(fields.path, &relative);
                 doc.add_text(fields.title, &note.title);
-                doc.add_text(
-                    fields.body,
-                    note.body.as_deref().unwrap_or(""),
-                );
+                doc.add_text(fields.body, note.body.as_deref().unwrap_or(""));
                 for tag in &note.tags {
                     doc.add_text(fields.tags, tag);
                 }

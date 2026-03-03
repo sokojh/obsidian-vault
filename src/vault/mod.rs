@@ -18,7 +18,8 @@ use crate::model::note::Note;
 /// If no such heading exists, returns content.len() (file end).
 /// If the section is not found, returns content.len().
 pub fn find_section_insert_point(content: &str, section: &str) -> usize {
-    let heading_re = Regex::new(r"(?m)^(#{1,6})\s+(.+)$").unwrap();
+    static HEADING_RE: OnceLock<Regex> = OnceLock::new();
+    let heading_re = HEADING_RE.get_or_init(|| Regex::new(r"(?m)^(#{1,6})\s+(.+)$").unwrap());
 
     let mut section_level: Option<usize> = None;
 
@@ -27,12 +28,12 @@ pub fn find_section_insert_point(content: &str, section: &str) -> usize {
         let heading_text = cap[2].trim();
         let match_start = cap.get(0).unwrap().start();
 
-        if section_level.is_none() {
-            if heading_text.eq_ignore_ascii_case(section) {
-                section_level = Some(level);
+        if let Some(lvl) = section_level {
+            if level <= lvl {
+                return match_start;
             }
-        } else if level <= section_level.unwrap() {
-            return match_start;
+        } else if heading_text.eq_ignore_ascii_case(section) {
+            section_level = Some(level);
         }
     }
 
@@ -92,10 +93,7 @@ impl Vault {
     pub fn resolve_note(&self, query: &str) -> OvResult<PathBuf> {
         // 1. Exact match by filename (without .md)
         for file in &self.files {
-            let stem = file
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy();
+            let stem = file.file_stem().unwrap_or_default().to_string_lossy();
             if stem.eq_ignore_ascii_case(query) {
                 return Ok(file.clone());
             }
@@ -117,13 +115,10 @@ impl Vault {
         let mut best_match: Option<(i64, &PathBuf)> = None;
 
         for file in &self.files {
-            let stem = file
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy();
+            let stem = file.file_stem().unwrap_or_default().to_string_lossy();
 
             if let Some(score) = matcher.fuzzy_match(&stem, query) {
-                if best_match.is_none() || score > best_match.unwrap().0 {
+                if best_match.as_ref().is_none_or(|(s, _)| score > *s) {
                     best_match = Some((score, file));
                 }
             }

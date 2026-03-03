@@ -55,12 +55,7 @@ pub fn search(
     }
 
     if !parsed.dates.is_empty() {
-        results.retain(|hit| {
-            parsed
-                .dates
-                .iter()
-                .any(|d| hit.modified.starts_with(d))
-        });
+        results.retain(|hit| parsed.dates.iter().any(|d| hit.modified.starts_with(d)));
     }
 
     if !parsed.types.is_empty() {

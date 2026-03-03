@@ -59,4 +59,3 @@ pub fn print_output<T: Serialize>(
         }
     }
 }
-

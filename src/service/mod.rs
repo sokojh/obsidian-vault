@@ -204,8 +204,16 @@ pub fn compute_stats_from_summaries(dirs: Vec<String>, summaries: &[NoteSummary]
         total_size_bytes: 0, // not available from index
         total_size_mb: "N/A".to_string(),
         evicted_files: 0,
-        avg_words_per_note: if total_notes > 0 { total_words / total_notes } else { 0 },
-        avg_links_per_note: if total_notes > 0 { total_links / total_notes } else { 0 },
+        avg_words_per_note: if total_notes > 0 {
+            total_words / total_notes
+        } else {
+            0
+        },
+        avg_links_per_note: if total_notes > 0 {
+            total_links / total_notes
+        } else {
+            0
+        },
         top_tags,
         directory_list: dirs,
     }
@@ -247,8 +255,16 @@ pub fn compute_stats(vault: &Vault, notes: &[Note]) -> VaultStats {
         total_size_bytes: total_size,
         total_size_mb: format!("{:.1}", total_size as f64 / 1_048_576.0),
         evicted_files: evicted,
-        avg_words_per_note: if total_notes > 0 { total_words / total_notes } else { 0 },
-        avg_links_per_note: if total_notes > 0 { total_links / total_notes } else { 0 },
+        avg_words_per_note: if total_notes > 0 {
+            total_words / total_notes
+        } else {
+            0
+        },
+        avg_links_per_note: if total_notes > 0 {
+            total_links / total_notes
+        } else {
+            0
+        },
         top_tags,
         directory_list: dirs,
     }

@@ -24,9 +24,7 @@ pub fn vault_index_dir(vault_path: &Path) -> PathBuf {
 /// Common iCloud Obsidian vault locations on macOS
 pub fn icloud_vault_candidates() -> Vec<PathBuf> {
     let home = dirs::home_dir().unwrap_or_default();
-    vec![
-        home.join("Library/Mobile Documents/iCloud~md~obsidian/Documents"),
-    ]
+    vec![home.join("Library/Mobile Documents/iCloud~md~obsidian/Documents")]
 }
 
 /// Resolve vault path from CLI arg, config, or auto-detect

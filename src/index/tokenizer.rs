@@ -1,6 +1,4 @@
-use tantivy::tokenizer::{
-    BoxTokenStream, LowerCaser, TextAnalyzer, Token, TokenStream, Tokenizer,
-};
+use tantivy::tokenizer::{BoxTokenStream, LowerCaser, TextAnalyzer, Token, TokenStream, Tokenizer};
 
 const TOKENIZER_NAME: &str = "ov_cjk";
 
@@ -75,10 +73,7 @@ impl Tokenizer for CjkBigramTokenizer {
             }
         }
 
-        BoxTokenStream::new(VecTokenStream {
-            tokens,
-            index: 0,
-        })
+        BoxTokenStream::new(VecTokenStream { tokens, index: 0 })
     }
 }
 

@@ -139,9 +139,7 @@ fn try_parse_yaml_block(content: &str, _lines: &[&str]) -> Option<(Frontmatter, 
     let after_yaml = &content[yaml_end..];
     let has_inline_fields = after_yaml.lines().any(|l| {
         let l = l.trim();
-        !l.is_empty()
-            && INLINE_FIELD_RE.is_match(l)
-            && !l.starts_with('#')
+        !l.is_empty() && INLINE_FIELD_RE.is_match(l) && !l.starts_with('#')
     });
 
     if has_inline_fields {

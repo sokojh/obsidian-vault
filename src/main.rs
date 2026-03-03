@@ -327,26 +327,24 @@ fn cmd_config(ctx: &Ctx, args: cli::config::ConfigArgs) -> Result<(), OvError> {
     let mut app_config = config::AppConfig::load()?;
 
     match (args.key.as_deref(), args.value.as_deref()) {
-        (None, None) => {
-            match ctx.format {
-                OutputFormat::Human => {
-                    println!("Config file: {}", paths::config_path().display());
-                    println!(
-                        "  vault_path: {}",
-                        app_config.vault_path.as_deref().unwrap_or("(auto-detect)")
-                    );
-                    println!(
-                        "  default_format: {}",
-                        app_config.default_format.as_deref().unwrap_or("human")
-                    );
-                }
-                _ => {
-                    let json = serde_json::to_value(&app_config).unwrap_or_default();
-                    let response = ApiResponse::success(&json, 1);
-                    println!("{}", response.to_json_string());
-                }
+        (None, None) => match ctx.format {
+            OutputFormat::Human => {
+                println!("Config file: {}", paths::config_path().display());
+                println!(
+                    "  vault_path: {}",
+                    app_config.vault_path.as_deref().unwrap_or("(auto-detect)")
+                );
+                println!(
+                    "  default_format: {}",
+                    app_config.default_format.as_deref().unwrap_or("human")
+                );
             }
-        }
+            _ => {
+                let json = serde_json::to_value(&app_config).unwrap_or_default();
+                let response = ApiResponse::success(&json, 1);
+                println!("{}", response.to_json_string());
+            }
+        },
         (Some(key), None) => match key {
             "vault_path" => println!(
                 "{}",
@@ -381,7 +379,13 @@ fn cmd_config(ctx: &Ctx, args: cli::config::ConfigArgs) -> Result<(), OvError> {
 
 fn cmd_search(ctx: &Ctx, args: cli::search::SearchArgs) -> Result<(), OvError> {
     let vault_path = paths::resolve_vault_path(ctx.vault.as_deref())?;
-    let results = search::search(&vault_path, &args.query, args.limit, args.offset, args.snippet)?;
+    let results = search::search(
+        &vault_path,
+        &args.query,
+        args.limit,
+        args.offset,
+        args.snippet,
+    )?;
 
     let count = results.len();
     match ctx.format {
@@ -634,9 +638,7 @@ fn cmd_daily(ctx: &Ctx, args: cli::daily::DailyArgs) -> Result<(), OvError> {
 /// Sanitize title for use as filename. Rejects dangerous characters.
 fn sanitize_title(title: &str) -> Result<String, OvError> {
     if title.contains('\0') {
-        return Err(OvError::General(
-            "Title contains null byte".to_string(),
-        ));
+        return Err(OvError::General("Title contains null byte".to_string()));
     }
     if title.contains('/') || title.contains('\\') {
         return Err(OvError::General(
@@ -644,9 +646,7 @@ fn sanitize_title(title: &str) -> Result<String, OvError> {
         ));
     }
     if title == "." || title == ".." {
-        return Err(OvError::General(
-            "Title cannot be '.' or '..'".to_string(),
-        ));
+        return Err(OvError::General("Title cannot be '.' or '..'".to_string()));
     }
     // Strip .md extension if user accidentally included it
     let clean = title.strip_suffix(".md").unwrap_or(title);
@@ -788,9 +788,8 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
     if let Some(ref frontmatter_json) = args.frontmatter {
         // ── Frontmatter path: dynamic YAML frontmatter from JSON ──
         let mut fm_map: std::collections::BTreeMap<String, serde_json::Value> =
-            serde_json::from_str(frontmatter_json).map_err(|e| {
-                OvError::General(format!("Invalid frontmatter JSON: {e}"))
-            })?;
+            serde_json::from_str(frontmatter_json)
+                .map_err(|e| OvError::General(format!("Invalid frontmatter JSON: {e}")))?;
 
         // Merge --tags into frontmatter
         if let Some(ref tags_str) = args.tags {
@@ -820,8 +819,8 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
         }
 
         if !fm_map.is_empty() {
-            let yaml_str = serde_yaml::to_string(&fm_map)
-                .map_err(|e| OvError::General(e.to_string()))?;
+            let yaml_str =
+                serde_yaml::to_string(&fm_map).map_err(|e| OvError::General(e.to_string()))?;
             content.push_str("---\n");
             content.push_str(&yaml_str);
             if !yaml_str.ends_with('\n') {
@@ -865,7 +864,10 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
         }
 
         // Clean remaining {{...}} placeholders
-        let placeholder_re = regex::Regex::new(r"\{\{[^}]+\}\}").unwrap();
+        use std::sync::OnceLock;
+        static PLACEHOLDER_RE: OnceLock<regex::Regex> = OnceLock::new();
+        let placeholder_re =
+            PLACEHOLDER_RE.get_or_init(|| regex::Regex::new(r"\{\{[^}]+\}\}").unwrap());
         content = placeholder_re.replace_all(&content, "").to_string();
     } else {
         // ── Default path: simple note ──
@@ -906,10 +908,7 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
     // Create parent directory if needed
     if let Some(parent) = full_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
-            OvError::General(format!(
-                "Cannot create directory {}: {e}",
-                parent.display()
-            ))
+            OvError::General(format!("Cannot create directory {}: {e}", parent.display()))
         })?;
     }
 
@@ -975,9 +974,7 @@ fn cmd_append(ctx: &Ctx, args: cli::append::AppendArgs) -> Result<(), OvError> {
     if let Some(ref section) = args.section {
         let insert_pos = find_section_insert_point(&file_content, section);
         // Ensure proper spacing
-        let prefix = if insert_pos > 0
-            && !file_content[..insert_pos].ends_with("\n\n")
-        {
+        let prefix = if insert_pos > 0 && !file_content[..insert_pos].ends_with("\n\n") {
             if file_content[..insert_pos].ends_with('\n') {
                 "\n".to_string()
             } else {
@@ -986,13 +983,12 @@ fn cmd_append(ctx: &Ctx, args: cli::append::AppendArgs) -> Result<(), OvError> {
         } else {
             String::new()
         };
-        let suffix = if insert_pos < file_content.len()
-            && !file_content[insert_pos..].starts_with('\n')
-        {
-            "\n".to_string()
-        } else {
-            String::new()
-        };
+        let suffix =
+            if insert_pos < file_content.len() && !file_content[insert_pos..].starts_with('\n') {
+                "\n".to_string()
+            } else {
+                String::new()
+            };
         file_content.insert_str(insert_pos, &format!("{prefix}{new_content}\n{suffix}"));
     } else {
         // Append to end
@@ -1193,4 +1189,3 @@ const GUIDE_TEXT: &str = concat!(
     "\n",
     "  \x1b[2m", "A vault with 100 well-linked notes beats 1000 orphan notes.", "\x1b[0m", "\n",
 );
-

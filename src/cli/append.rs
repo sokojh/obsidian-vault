@@ -1,13 +1,11 @@
 use clap::Args;
 
 #[derive(Args)]
-#[command(
-    after_long_help = "\x1b[1mExamples:\x1b[0m
+#[command(after_long_help = "\x1b[1mExamples:\x1b[0m
   ov append \"My Note\" --content \"추가 내용\"                       # Append to end
   ov append \"My Note\" --section \"Timeline\" --content \"14:30 이벤트\"  # Insert under section
   ov append \"My Note\" --date --content \"오늘의 기록\"               # Auto date heading
-  echo \"piped text\" | ov append \"My Note\" --stdin                 # From stdin"
-)]
+  echo \"piped text\" | ov append \"My Note\" --stdin                 # From stdin")]
 pub struct AppendArgs {
     /// Note name to append to (fuzzy matching supported)
     pub note: String,

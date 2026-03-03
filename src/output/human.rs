@@ -86,16 +86,56 @@ pub fn print_stats(stats: &VaultStats) {
     println!("{}", "Vault Statistics".bold().underline());
     println!();
 
-    println!("  {:<25} {}", "total notes".dimmed(), stats.total_notes.to_string().cyan());
-    println!("  {:<25} {}", "total words".dimmed(), stats.total_words.to_string().cyan());
-    println!("  {:<25} {}", "total links".dimmed(), stats.total_links.to_string().cyan());
-    println!("  {:<25} {}", "unique tags".dimmed(), stats.unique_tags.to_string().cyan());
-    println!("  {:<25} {}", "directories".dimmed(), stats.directories.to_string().cyan());
-    println!("  {:<25} {}", "total size bytes".dimmed(), stats.total_size_bytes.to_string().cyan());
-    println!("  {:<25} {}", "total size mb".dimmed(), stats.total_size_mb.cyan());
-    println!("  {:<25} {}", "evicted files".dimmed(), stats.evicted_files.to_string().cyan());
-    println!("  {:<25} {}", "avg words per note".dimmed(), stats.avg_words_per_note.to_string().cyan());
-    println!("  {:<25} {}", "avg links per note".dimmed(), stats.avg_links_per_note.to_string().cyan());
+    println!(
+        "  {:<25} {}",
+        "total notes".dimmed(),
+        stats.total_notes.to_string().cyan()
+    );
+    println!(
+        "  {:<25} {}",
+        "total words".dimmed(),
+        stats.total_words.to_string().cyan()
+    );
+    println!(
+        "  {:<25} {}",
+        "total links".dimmed(),
+        stats.total_links.to_string().cyan()
+    );
+    println!(
+        "  {:<25} {}",
+        "unique tags".dimmed(),
+        stats.unique_tags.to_string().cyan()
+    );
+    println!(
+        "  {:<25} {}",
+        "directories".dimmed(),
+        stats.directories.to_string().cyan()
+    );
+    println!(
+        "  {:<25} {}",
+        "total size bytes".dimmed(),
+        stats.total_size_bytes.to_string().cyan()
+    );
+    println!(
+        "  {:<25} {}",
+        "total size mb".dimmed(),
+        stats.total_size_mb.cyan()
+    );
+    println!(
+        "  {:<25} {}",
+        "evicted files".dimmed(),
+        stats.evicted_files.to_string().cyan()
+    );
+    println!(
+        "  {:<25} {}",
+        "avg words per note".dimmed(),
+        stats.avg_words_per_note.to_string().cyan()
+    );
+    println!(
+        "  {:<25} {}",
+        "avg links per note".dimmed(),
+        stats.avg_links_per_note.to_string().cyan()
+    );
 
     if !stats.top_tags.is_empty() {
         println!("  {}:", "top tags".dimmed());

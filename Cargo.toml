@@ -2,6 +2,11 @@
 name = "obsidian-vault"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+repository = "https://github.com/sokojh/obsidian-vault"
+homepage = "https://github.com/sokojh/obsidian-vault"
+keywords = ["obsidian", "cli", "vault", "zettelkasten", "knowledge-management"]
+categories = ["command-line-utilities"]
 description = "High-performance Obsidian vault CLI for terminal and AI integration"
 
 [[bin]]

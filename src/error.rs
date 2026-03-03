@@ -32,7 +32,7 @@ pub enum OvError {
     #[error("Config write error: {0}")]
     TomlSerialize(#[from] toml::ser::Error),
 
-    #[error("WalkDir error: {0}")]
+    #[error("File scan error: {0}")]
     WalkDir(#[from] walkdir::Error),
 }
 
@@ -45,7 +45,6 @@ impl OvError {
             _ => 1,
         }
     }
-
 }
 
 pub type OvResult<T> = Result<T, OvError>;

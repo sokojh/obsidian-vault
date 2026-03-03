@@ -11,9 +11,7 @@ pub fn filter_fields(value: &Value, fields: &[String]) -> Value {
                 .collect();
             Value::Object(filtered)
         }
-        Value::Array(arr) => {
-            Value::Array(arr.iter().map(|v| filter_fields(v, fields)).collect())
-        }
+        Value::Array(arr) => Value::Array(arr.iter().map(|v| filter_fields(v, fields)).collect()),
         _ => value.clone(),
     }
 }

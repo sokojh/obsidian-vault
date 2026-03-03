@@ -39,5 +39,4 @@ impl AppConfig {
         fs::write(&path, content)?;
         Ok(())
     }
-
 }

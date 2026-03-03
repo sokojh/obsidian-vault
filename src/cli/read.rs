@@ -1,12 +1,10 @@
 use clap::Args;
 
 #[derive(Args)]
-#[command(
-    after_long_help = "\x1b[1mExamples:\x1b[0m
+#[command(after_long_help = "\x1b[1mExamples:\x1b[0m
   ov read \"ElasticSearch\"                  # Metadata + body (fuzzy match)
   ov read \"ElasticSearch\" --format json    # Full note as JSON
-  ov read \"ElasticSearch\" --raw            # Body text only, no metadata"
-)]
+  ov read \"ElasticSearch\" --raw            # Body text only, no metadata")]
 pub struct ReadArgs {
     /// Note name or path (fuzzy matching supported — partial names work)
     pub note: String,

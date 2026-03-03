@@ -34,16 +34,13 @@ pub fn scan_vault(root: &Path, extra_excludes: &[String]) -> Vec<PathBuf> {
         let path = entry.path();
 
         // Only .md files
-        if !path.extension().is_some_and(|ext| ext == "md") {
+        if path.extension().is_none_or(|ext| ext != "md") {
             continue;
         }
 
         // Skip excalidraw files
         let name = path.file_name().unwrap_or_default().to_string_lossy();
-        if EXCLUDED_EXTENSIONS
-            .iter()
-            .any(|ext| name.ends_with(ext))
-        {
+        if EXCLUDED_EXTENSIONS.iter().any(|ext| name.ends_with(ext)) {
             continue;
         }
 
@@ -64,10 +61,7 @@ fn is_excluded_dir(path: &Path, root: &Path, extra_excludes: &[String]) -> bool 
         return false;
     }
 
-    let dir_name = path
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy();
+    let dir_name = path.file_name().unwrap_or_default().to_string_lossy();
 
     // Built-in exclusions
     if EXCLUDED_DIRS.iter().any(|&d| dir_name == d) {
@@ -77,7 +71,10 @@ fn is_excluded_dir(path: &Path, root: &Path, extra_excludes: &[String]) -> bool 
     // User-configured exclusions
     if let Ok(relative) = path.strip_prefix(root) {
         let rel_str = relative.to_string_lossy();
-        if extra_excludes.iter().any(|e| rel_str.starts_with(e.as_str())) {
+        if extra_excludes
+            .iter()
+            .any(|e| rel_str.starts_with(e.as_str()))
+        {
             return true;
         }
     }

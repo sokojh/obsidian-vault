@@ -30,6 +30,4 @@ impl<T: Serialize> ApiResponse<T> {
     pub fn to_json_string(&self) -> String {
         serde_json::to_string_pretty(self).unwrap_or_else(|_| "{}".to_string())
     }
-
 }
-

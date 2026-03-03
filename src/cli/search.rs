@@ -1,8 +1,7 @@
 use clap::Args;
 
 #[derive(Args)]
-#[command(
-    after_long_help = "\x1b[1mQuery Prefixes:\x1b[0m
+#[command(after_long_help = "\x1b[1mQuery Prefixes:\x1b[0m
   tag:#imweb          Filter by tag
   in:Clippings        Filter by directory
   title:장애          Search in title only
@@ -18,8 +17,7 @@ use clap::Args;
   ov search \"title:장애\" --format json       # Title search, JSON output
 
 \x1b[1mNote:\x1b[0m
-  Requires a search index. Run 'ov index build' first."
-)]
+  Requires a search index. Run 'ov index build' first.")]
 pub struct SearchArgs {
     /// Search query — plain keywords or prefixed filters (tag:, in:, title:, date:, type:)
     pub query: String,
