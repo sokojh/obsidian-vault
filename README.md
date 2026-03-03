@@ -11,18 +11,56 @@ ov stats
 
 ## Install
 
+### Pre-built binaries (recommended)
+
+Download from [GitHub Releases](https://github.com/sokojh/obsidian-vault/releases/latest):
+
 ```bash
+# macOS (Apple Silicon)
+curl -LO https://github.com/sokojh/obsidian-vault/releases/latest/download/ov-aarch64-apple-darwin.tar.gz
+tar xzf ov-aarch64-apple-darwin.tar.gz
+sudo mv ov /usr/local/bin/
+
+# macOS (Intel)
+curl -LO https://github.com/sokojh/obsidian-vault/releases/latest/download/ov-x86_64-apple-darwin.tar.gz
+tar xzf ov-x86_64-apple-darwin.tar.gz
+sudo mv ov /usr/local/bin/
+
+# Linux (x86_64)
+curl -LO https://github.com/sokojh/obsidian-vault/releases/latest/download/ov-x86_64-unknown-linux-gnu.tar.gz
+tar xzf ov-x86_64-unknown-linux-gnu.tar.gz
+sudo mv ov /usr/local/bin/
+
+# Linux (ARM64)
+curl -LO https://github.com/sokojh/obsidian-vault/releases/latest/download/ov-aarch64-unknown-linux-gnu.tar.gz
+tar xzf ov-aarch64-unknown-linux-gnu.tar.gz
+sudo mv ov /usr/local/bin/
+```
+
+### From crates.io
+
+```bash
+cargo install obsidian-vault
+```
+
+### From source
+
+```bash
+git clone https://github.com/sokojh/obsidian-vault.git
+cd obsidian-vault
 cargo install --path .
 ```
+
+### Setup
 
 Set your vault path once:
 
 ```bash
-# ~/.zshrc
+# ~/.zshrc or ~/.bashrc
 export OV_VAULT="$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents/MyVault"
 ```
 
-Or pass `--vault <path>` to any command.
+Or pass `--vault <path>` to any command. Run `ov guide` for best practices.
 
 ## Quick Start
 
@@ -74,6 +112,7 @@ ov daily
 | `append` | Append to an existing note (section-aware) |
 | `index` | Manage search index (build/status/clear) |
 | `config` | Get/set configuration |
+| `guide` | Knowledge management best practices |
 
 ### Global Options
 
