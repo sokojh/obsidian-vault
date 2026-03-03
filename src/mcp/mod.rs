@@ -226,6 +226,145 @@ impl OvMcpServer {
         .map_err(|e| e.to_string())
     }
 
+    #[tool(description = "Create a new note in the Obsidian vault with dynamic frontmatter, tags, and section headings. No template file needed — the structure is defined at call time.")]
+    async fn vault_create(
+        &self,
+        Parameters(params): Parameters<CreateParams>,
+    ) -> Result<String, String> {
+        let vault = self.open_vault()?;
+
+        // Determine target directory
+        let dir = params
+            .dir
+            .as_deref()
+            .or(vault.obsidian_config.new_file_location.as_deref())
+            .unwrap_or("");
+
+        let filename = format!("{}.md", params.title);
+        let relative = if dir.is_empty() {
+            filename.clone()
+        } else {
+            format!("{dir}/{filename}")
+        };
+        let full_path = vault.root.join(&relative);
+
+        // Path traversal protection: check BEFORE any filesystem side effects.
+        // We can't canonicalize (dir may not exist yet), so normalize the
+        // logical path by stripping ".." components and verify the result
+        // stays under vault root.
+        {
+            let canonical_root = vault.root.canonicalize().map_err(|e| e.to_string())?;
+            // Build normalized path by processing each component
+            let mut normalized = canonical_root.clone();
+            for component in std::path::Path::new(&relative).components() {
+                match component {
+                    std::path::Component::ParentDir => {
+                        normalized.pop();
+                    }
+                    std::path::Component::Normal(c) => {
+                        normalized.push(c);
+                    }
+                    _ => {} // skip CurDir, Prefix, RootDir
+                }
+            }
+            if !normalized.starts_with(&canonical_root) {
+                return Err(format!(
+                    "Path escapes vault boundary: {relative}"
+                ));
+            }
+        }
+
+        // Build file content
+        let mut file_content = String::new();
+
+        // Build YAML frontmatter (BTreeMap ensures deterministic key ordering for clean git diffs)
+        let mut fm_map = params.frontmatter.unwrap_or_default();
+
+        // Merge tags into frontmatter
+        if let Some(tags) = params.tags {
+            let tag_values: Vec<serde_json::Value> = tags
+                .iter()
+                .map(|t| {
+                    let tag = if t.starts_with('#') {
+                        t.clone()
+                    } else {
+                        format!("#{t}")
+                    };
+                    serde_json::Value::String(tag)
+                })
+                .collect();
+
+            fm_map
+                .entry("tags".to_string())
+                .and_modify(|v| {
+                    if let serde_json::Value::Array(arr) = v {
+                        arr.extend(tag_values.clone());
+                    } else {
+                        *v = serde_json::Value::Array(tag_values.clone());
+                    }
+                })
+                .or_insert(serde_json::Value::Array(tag_values));
+        }
+
+        if !fm_map.is_empty() {
+            let yaml_str = serde_yaml::to_string(&fm_map).map_err(|e| e.to_string())?;
+            file_content.push_str("---\n");
+            file_content.push_str(&yaml_str);
+            if !yaml_str.ends_with('\n') {
+                file_content.push('\n');
+            }
+            file_content.push_str("---\n");
+        }
+
+        // Add sections
+        if let Some(sections) = params.sections {
+            for heading in &sections {
+                file_content.push_str(&format!("\n## {heading}\n\n"));
+            }
+        }
+
+        // Add initial content
+        if let Some(content) = params.content {
+            if !file_content.ends_with('\n') {
+                file_content.push('\n');
+            }
+            file_content.push_str(&content);
+            if !content.ends_with('\n') {
+                file_content.push('\n');
+            }
+        }
+
+        // Create parent directory if needed (after path traversal check)
+        if let Some(parent) = full_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+
+        // Atomic file creation: O_CREAT | O_EXCL via create_new(true)
+        // Single syscall — no TOCTOU race between exists() and write()
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&full_path)
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::AlreadyExists {
+                    format!("Note already exists: {relative}")
+                } else {
+                    e.to_string()
+                }
+            })?;
+        file.write_all(file_content.as_bytes())
+            .map_err(|e| e.to_string())?;
+        file.sync_all().map_err(|e| e.to_string())?;
+
+        serde_json::to_string_pretty(&serde_json::json!({
+            "action": "created",
+            "path": relative,
+            "title": params.title,
+        }))
+        .map_err(|e| e.to_string())
+    }
+
     #[tool(description = "Get statistics about the Obsidian vault (note count, word count, top tags, etc.)")]
     async fn vault_stats(&self) -> Result<String, String> {
         let vault = self.open_vault()?;

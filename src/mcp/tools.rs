@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -70,4 +72,23 @@ pub struct AppendParams {
     pub section: Option<String>,
     /// Add date subheading (### YYYY-MM-DD)
     pub date: Option<bool>,
+}
+
+/// Parameters for vault_create tool
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateParams {
+    /// Note title (becomes filename)
+    pub title: String,
+    /// Target directory within vault (e.g., "People", "Projects")
+    pub dir: Option<String>,
+    /// Frontmatter fields as key-value pairs (becomes YAML frontmatter)
+    /// Example: {"type": "person", "role": "Engineer", "org": "imweb"}
+    pub frontmatter: Option<BTreeMap<String, serde_json::Value>>,
+    /// Tags to include (auto-prefixed with # if missing)
+    pub tags: Option<Vec<String>>,
+    /// Section headings to pre-create (rendered as ## headings)
+    /// Example: ["Summary", "Relationships", "Timeline"]
+    pub sections: Option<Vec<String>>,
+    /// Initial body content (placed after sections if both provided)
+    pub content: Option<String>,
 }
