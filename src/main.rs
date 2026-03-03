@@ -89,7 +89,7 @@ fn open_vault(ctx: &Ctx) -> Result<Vault, OvError> {
 // ─── list ────────────────────────────────────────────────────────────────
 
 fn cmd_list(ctx: &Ctx, args: cli::list::ListArgs) -> Result<(), OvError> {
-    let vault = open_vault(ctx)?;
+    let vault_path = paths::resolve_vault_path(ctx.vault.as_deref())?;
     let params = service::ListParams {
         dir: args.dir,
         tag: args.tag,
@@ -99,7 +99,17 @@ fn cmd_list(ctx: &Ctx, args: cli::list::ListArgs) -> Result<(), OvError> {
         limit: args.limit,
         offset: args.offset,
     };
-    let result = service::list_notes(vault.notes(), &params);
+
+    // Try index-first (no file I/O), fall back to full scan
+    let result = if let Some(summaries) = index::reader::read_all_from_index(&vault_path) {
+        service::list_summaries(&summaries, &params)
+    } else {
+        let vault = Vault::open(vault_path)?;
+        if !ctx.quiet {
+            eprintln!("hint: run `ov index build` for faster queries");
+        }
+        service::list_notes(vault.notes(), &params)
+    };
 
     match ctx.format {
         OutputFormat::Human => {
@@ -181,13 +191,22 @@ fn cmd_read(ctx: &Ctx, args: cli::read::ReadArgs) -> Result<(), OvError> {
 // ─── tags ────────────────────────────────────────────────────────────────
 
 fn cmd_tags(ctx: &Ctx, args: cli::tags::TagsArgs) -> Result<(), OvError> {
-    let vault = open_vault(ctx)?;
+    let vault_path = paths::resolve_vault_path(ctx.vault.as_deref())?;
     let params = service::TagsParams {
         sort: args.sort,
         min_count: args.min_count,
         limit: args.limit,
     };
-    let summaries = service::aggregate_tags(vault.notes(), &params);
+
+    let summaries = if let Some(idx_summaries) = index::reader::read_all_from_index(&vault_path) {
+        service::aggregate_tags_from_summaries(&idx_summaries, &params)
+    } else {
+        let vault = Vault::open(vault_path)?;
+        if !ctx.quiet {
+            eprintln!("hint: run `ov index build` for faster queries");
+        }
+        service::aggregate_tags(vault.notes(), &params)
+    };
 
     let count = summaries.len();
     match ctx.format {
@@ -205,8 +224,18 @@ fn cmd_tags(ctx: &Ctx, args: cli::tags::TagsArgs) -> Result<(), OvError> {
 // ─── stats ───────────────────────────────────────────────────────────────
 
 fn cmd_stats(ctx: &Ctx) -> Result<(), OvError> {
-    let vault = open_vault(ctx)?;
-    let stats = service::compute_stats(&vault, vault.notes());
+    let vault_path = paths::resolve_vault_path(ctx.vault.as_deref())?;
+
+    let stats = if let Some(idx_summaries) = index::reader::read_all_from_index(&vault_path) {
+        let vault = Vault::open(vault_path)?;
+        service::compute_stats_from_summaries(vault.directories(), &idx_summaries)
+    } else {
+        let vault = Vault::open(vault_path)?;
+        if !ctx.quiet {
+            eprintln!("hint: run `ov index build` for faster queries");
+        }
+        service::compute_stats(&vault, vault.notes())
+    };
 
     match ctx.format {
         OutputFormat::Human => {

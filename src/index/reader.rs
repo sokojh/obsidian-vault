@@ -1,11 +1,12 @@
 use std::path::Path;
 
-use tantivy::collector::TopDocs;
-use tantivy::query::QueryParser;
+use tantivy::collector::{Count, TopDocs};
+use tantivy::query::{AllQuery, QueryParser};
 use tantivy::{Index, ReloadPolicy, SnippetGenerator};
 
 use crate::config::paths;
 use crate::error::{OvError, OvResult};
+use crate::model::note::NoteSummary;
 
 use super::tokenizer;
 
@@ -134,4 +135,88 @@ fn get_field_text(doc: &tantivy::TantivyDocument, field: &tantivy::schema::Field
             }
         })
         .unwrap_or_default()
+}
+
+fn get_field_u64(doc: &tantivy::TantivyDocument, field: &tantivy::schema::Field) -> u64 {
+    doc.get_first(*field)
+        .and_then(|v| {
+            if let tantivy::schema::OwnedValue::U64(n) = v {
+                Some(*n)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0)
+}
+
+/// Read all note summaries directly from the Tantivy index (no file I/O).
+/// Returns None if the index doesn't exist or is incompatible.
+pub fn read_all_from_index(vault_root: &Path) -> Option<Vec<NoteSummary>> {
+    let index_dir = paths::vault_index_dir(vault_root);
+    let tantivy_dir = index_dir.join("tantivy");
+
+    if !tantivy_dir.exists() {
+        return None;
+    }
+
+    let index = Index::open_in_dir(&tantivy_dir).ok()?;
+
+    // Check schema has word_count field (v2 schema)
+    if index.schema().get_field("word_count").is_err() {
+        return None;
+    }
+
+    let (_schema, fields) = super::schema::build_schema();
+
+    index
+        .tokenizers()
+        .register(tokenizer::tokenizer_name(), tokenizer::build_text_analyzer());
+
+    let reader = index
+        .reader_builder()
+        .reload_policy(ReloadPolicy::Manual)
+        .try_into()
+        .ok()?;
+
+    let searcher = reader.searcher();
+
+    // Count total docs
+    let total = searcher.search(&AllQuery, &Count).ok()?;
+    if total == 0 {
+        return Some(Vec::new());
+    }
+
+    // Retrieve all documents
+    let top_docs = searcher
+        .search(&AllQuery, &TopDocs::with_limit(total))
+        .ok()?;
+
+    let mut summaries = Vec::with_capacity(top_docs.len());
+    for (_score, doc_addr) in &top_docs {
+        let doc: tantivy::TantivyDocument = searcher.doc(*doc_addr).ok()?;
+
+        let tags: Vec<String> = doc
+            .get_all(fields.tags)
+            .filter_map(|v| {
+                if let tantivy::schema::OwnedValue::Str(s) = v {
+                    Some(s.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        summaries.push(NoteSummary {
+            title: get_field_text(&doc, &fields.title),
+            path: get_field_text(&doc, &fields.path),
+            dir: get_field_text(&doc, &fields.dir),
+            tags,
+            modified: get_field_text(&doc, &fields.modified),
+            word_count: get_field_u64(&doc, &fields.word_count) as usize,
+            link_count: get_field_u64(&doc, &fields.link_count) as usize,
+            evicted: false,
+        });
+    }
+
+    Some(summaries)
 }

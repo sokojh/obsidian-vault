@@ -969,6 +969,7 @@ dependencies = [
  "fuzzy-matcher",
  "lazy_static",
  "predicates",
+ "rayon",
  "regex",
  "rmcp",
  "schemars",

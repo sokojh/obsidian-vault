@@ -1,5 +1,5 @@
 use tantivy::schema::{
-    Field, Schema, TextFieldIndexing, TextOptions, STORED, STRING,
+    Field, NumericOptions, Schema, TextFieldIndexing, TextOptions, STORED, STRING,
 };
 
 use super::tokenizer;
@@ -15,6 +15,9 @@ pub struct IndexFields {
     pub modified: Field,
     pub hash: Field,
     pub note_type: Field,
+    pub word_count: Field,
+    pub file_size: Field,
+    pub link_count: Field,
 }
 
 /// Build the tantivy schema
@@ -48,6 +51,11 @@ pub fn build_schema() -> (Schema, IndexFields) {
     let hash = builder.add_text_field("hash", STORED);
     let note_type = builder.add_text_field("note_type", STRING | STORED);
 
+    let stored_u64 = NumericOptions::default().set_stored();
+    let word_count = builder.add_u64_field("word_count", stored_u64.clone());
+    let file_size = builder.add_u64_field("file_size", stored_u64.clone());
+    let link_count = builder.add_u64_field("link_count", stored_u64);
+
     let schema = builder.build();
     let fields = IndexFields {
         path,
@@ -58,6 +66,9 @@ pub fn build_schema() -> (Schema, IndexFields) {
         modified,
         hash,
         note_type,
+        word_count,
+        file_size,
+        link_count,
     };
 
     (schema, fields)

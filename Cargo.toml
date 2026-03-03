@@ -35,6 +35,9 @@ dirs = "6"
 # Hashing
 blake3 = "1"
 
+# Parallelism
+rayon = "1.10"
+
 # Fuzzy matching
 fuzzy-matcher = "0.3"
 

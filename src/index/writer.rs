@@ -54,9 +54,13 @@ pub fn build_index(vault: &Vault, force: bool) -> OvResult<BuildResult> {
         match Index::open_in_dir(&tantivy_dir) {
             Ok(idx) => {
                 // Verify schema compatibility — if new fields are missing, force rebuild
-                if idx.schema().get_field("note_type").is_err() {
+                if idx.schema().get_field("word_count").is_err() {
+                    // Clear both tantivy dir AND file hashes to force full reindex
                     fs::remove_dir_all(&tantivy_dir)?;
                     fs::create_dir_all(&tantivy_dir)?;
+                    if hashes_path.exists() {
+                        fs::remove_file(&hashes_path)?;
+                    }
                     Index::create_in_dir(&tantivy_dir, schema.clone())
                         .map_err(|e| OvError::General(e.to_string()))?
                 } else {
@@ -140,6 +144,9 @@ pub fn build_index(vault: &Vault, force: bool) -> OvResult<BuildResult> {
                 doc.add_text(fields.dir, &note.dir);
                 doc.add_text(fields.modified, &mod_str);
                 doc.add_text(fields.hash, &hash);
+                doc.add_u64(fields.word_count, note.word_count as u64);
+                doc.add_u64(fields.file_size, size);
+                doc.add_u64(fields.link_count, note.links.len() as u64);
 
                 // Extract type from frontmatter extra
                 let note_type = note

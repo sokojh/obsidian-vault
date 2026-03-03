@@ -25,15 +25,35 @@ pub struct ListResult {
     pub total: usize,
 }
 
+/// List notes from pre-built NoteSummary slice (index-first path)
+pub fn list_summaries(summaries: &[NoteSummary], params: &ListParams) -> ListResult {
+    let mut summaries: Vec<NoteSummary> = summaries.to_vec();
+    apply_list_filters(&mut summaries, params);
+    let total = summaries.len();
+    let notes = summaries
+        .into_iter()
+        .skip(params.offset)
+        .take(params.limit)
+        .collect();
+    ListResult { notes, total }
+}
+
 pub fn list_notes(notes: &[Note], params: &ListParams) -> ListResult {
     let mut summaries: Vec<NoteSummary> = notes.iter().map(NoteSummary::from).collect();
+    apply_list_filters(&mut summaries, params);
+    let total = summaries.len();
+    let notes = summaries
+        .into_iter()
+        .skip(params.offset)
+        .take(params.limit)
+        .collect();
+    ListResult { notes, total }
+}
 
-    // Filter by directory
+fn apply_list_filters(summaries: &mut Vec<NoteSummary>, params: &ListParams) {
     if let Some(ref dir) = params.dir {
         summaries.retain(|n| n.dir == *dir || n.dir.starts_with(&format!("{dir}/")));
     }
-
-    // Filter by tag
     if let Some(ref tag) = params.tag {
         let tag_normalized = if tag.starts_with('#') {
             tag.clone()
@@ -42,8 +62,6 @@ pub fn list_notes(notes: &[Note], params: &ListParams) -> ListResult {
         };
         summaries.retain(|n| n.tags.iter().any(|t| t == &tag_normalized));
     }
-
-    // Filter by date
     if let Some(ref date) = params.date {
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
         let date_filter = match date.as_str() {
@@ -52,27 +70,14 @@ pub fn list_notes(notes: &[Note], params: &ListParams) -> ListResult {
         };
         summaries.retain(|n| n.modified.starts_with(&date_filter));
     }
-
-    // Sort
     match params.sort.as_str() {
         "title" => summaries.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase())),
         "size" | "words" => summaries.sort_by(|a, b| b.word_count.cmp(&a.word_count)),
         _ => summaries.sort_by(|a, b| b.modified.cmp(&a.modified)),
     }
-
     if params.reverse {
         summaries.reverse();
     }
-
-    // Pagination
-    let total = summaries.len();
-    let notes = summaries
-        .into_iter()
-        .skip(params.offset)
-        .take(params.limit)
-        .collect();
-
-    ListResult { notes, total }
 }
 
 // ─── tags ────────────────────────────────────────────────────────────────
@@ -81,6 +86,23 @@ pub struct TagsParams {
     pub sort: String,
     pub min_count: Option<usize>,
     pub limit: Option<usize>,
+}
+
+/// Aggregate tags from pre-built summaries (index-first path)
+pub fn aggregate_tags_from_summaries(
+    summaries: &[NoteSummary],
+    params: &TagsParams,
+) -> Vec<TagSummary> {
+    let mut tag_map: HashMap<String, Vec<String>> = HashMap::new();
+    for s in summaries {
+        for tag in &s.tags {
+            tag_map
+                .entry(tag.clone())
+                .or_default()
+                .push(s.title.clone());
+        }
+    }
+    finish_aggregate_tags(tag_map, params)
 }
 
 pub fn aggregate_tags(notes: &[Note], params: &TagsParams) -> Vec<TagSummary> {
@@ -93,7 +115,13 @@ pub fn aggregate_tags(notes: &[Note], params: &TagsParams) -> Vec<TagSummary> {
                 .push(note.title.clone());
         }
     }
+    finish_aggregate_tags(tag_map, params)
+}
 
+fn finish_aggregate_tags(
+    tag_map: HashMap<String, Vec<String>>,
+    params: &TagsParams,
+) -> Vec<TagSummary> {
     let mut summaries: Vec<TagSummary> = tag_map
         .into_iter()
         .map(|(tag, notes)| TagSummary {
@@ -141,6 +169,46 @@ pub struct VaultStats {
     pub avg_links_per_note: usize,
     pub top_tags: Vec<TagCount>,
     pub directory_list: Vec<String>,
+}
+
+/// Compute stats from pre-built summaries (index-first path, no file I/O)
+pub fn compute_stats_from_summaries(dirs: Vec<String>, summaries: &[NoteSummary]) -> VaultStats {
+    let total_notes = summaries.len();
+    let total_words: usize = summaries.iter().map(|s| s.word_count).sum();
+    let total_links: usize = summaries.iter().map(|s| s.link_count).sum();
+
+    let mut all_tags: HashMap<String, usize> = HashMap::new();
+    for s in summaries {
+        for tag in &s.tags {
+            *all_tags.entry(tag.clone()).or_default() += 1;
+        }
+    }
+
+    let mut sorted_tags: Vec<_> = all_tags.iter().collect();
+    sorted_tags.sort_by(|a, b| b.1.cmp(a.1));
+    let top_tags: Vec<TagCount> = sorted_tags
+        .iter()
+        .take(10)
+        .map(|(tag, count)| TagCount {
+            tag: (*tag).clone(),
+            count: **count,
+        })
+        .collect();
+
+    VaultStats {
+        total_notes,
+        total_words,
+        total_links,
+        unique_tags: all_tags.len(),
+        directories: dirs.len(),
+        total_size_bytes: 0, // not available from index
+        total_size_mb: "N/A".to_string(),
+        evicted_files: 0,
+        avg_words_per_note: if total_notes > 0 { total_words / total_notes } else { 0 },
+        avg_links_per_note: if total_notes > 0 { total_links / total_notes } else { 0 },
+        top_tags,
+        directory_list: dirs,
+    }
 }
 
 pub fn compute_stats(vault: &Vault, notes: &[Note]) -> VaultStats {

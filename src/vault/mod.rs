@@ -6,6 +6,7 @@ use std::sync::OnceLock;
 
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
+use rayon::prelude::*;
 use regex::Regex;
 
 use crate::error::{OvError, OvResult};
@@ -77,11 +78,11 @@ impl Vault {
         extract::extract_note(&self.root, &full_path)
     }
 
-    /// Get all notes, cached after first access
+    /// Get all notes, cached after first access (parallel I/O via rayon)
     pub fn notes(&self) -> &[Note] {
         self.notes_cache.get_or_init(|| {
             self.files
-                .iter()
+                .par_iter()
                 .filter_map(|f| extract::extract_note(&self.root, f).ok())
                 .collect()
         })
