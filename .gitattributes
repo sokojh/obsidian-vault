@@ -1,0 +1,9 @@
+# Force LF line endings for all text files
+* text=auto eol=lf
+
+# Ensure markdown fixtures are always LF (critical for frontmatter parsing)
+*.md text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.rs text eol=lf
