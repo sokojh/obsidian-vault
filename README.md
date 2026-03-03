@@ -1,6 +1,6 @@
 # ov — Obsidian Vault CLI
 
-High-performance CLI for Obsidian vaults. Terminal-first, AI-ready.
+High-performance CLI for Obsidian vaults. Terminal-first.
 
 ```
 ov search "kubernetes" --snippet
@@ -74,7 +74,6 @@ ov daily
 | `append` | Append to an existing note (section-aware) |
 | `index` | Manage search index (build/status/clear) |
 | `config` | Get/set configuration |
-| `mcp` | Start MCP server for AI integration |
 
 ### Global Options
 
@@ -150,29 +149,15 @@ src/
 ├── search/              # Query parsing with prefix support
 ├── service/             # Shared business logic (list, tags, stats, backlinks)
 ├── config/              # App config, XDG paths
-├── output/              # Human, JSON, JSONL formatters
-└── mcp/                 # MCP server (7 read-only tools)
+└── output/              # Human, JSON, JSONL formatters
 ```
 
 Key design decisions:
 - **Index-first reads**: `list`, `tags`, `stats` read from Tantivy index with no file I/O, falling back to vault scan
 - **Parallel I/O**: `rayon::par_iter()` for vault scanning when index unavailable
 - **OnceLock caching**: Notes parsed once per session
-- **Service layer**: Shared logic between CLI and MCP server
+- **Service layer**: Reusable business logic in `service/mod.rs`
 - **Incremental indexing**: File hash tracking for fast rebuilds
-
-## MCP Server
-
-`ov mcp` starts a Model Context Protocol server (stdio transport) exposing 7 read-only tools for AI integration:
-
-- `vault_list` — List/filter notes
-- `vault_read` — Read note content
-- `vault_search` — Full-text search
-- `vault_tags` — Tag aggregation
-- `vault_stats` — Vault statistics
-- `vault_links` / `vault_backlinks` — Link navigation
-
-Works with any MCP-compatible client (Claude Desktop, etc).
 
 ## Note Creation
 

@@ -27,8 +27,7 @@ src/
 ├── search/           # parse_query() — tag:/in:/title:/date:/type: prefix parsing
 ├── service/          # Shared logic: list, tags, stats, backlinks (CLI + MCP)
 ├── config/           # AppConfig (TOML), paths::resolve_vault_path()
-├── output/           # human.rs, json.rs (ApiResponse), fields.rs (field selection)
-└── mcp/              # MCP server (rmcp crate, stdio, 7 read-only tools)
+└── output/           # human.rs, json.rs (ApiResponse), fields.rs (field selection)
 ```
 
 ## Architecture Patterns
@@ -37,7 +36,7 @@ src/
 `cmd_list`, `cmd_tags`, `cmd_stats` try `index::reader::read_all_from_index()` first (zero file I/O from Tantivy). Falls back to `Vault::notes()` if index missing.
 
 ### Service Layer
-`src/service/mod.rs` contains shared business logic used by both `main.rs` (CLI) and `mcp/mod.rs`. Two variants per function:
+`src/service/mod.rs` contains reusable business logic. Two variants per function:
 - `list_notes(notes)` — from `&[Note]` (full scan path)
 - `list_summaries(summaries)` — from `&[NoteSummary]` (index path)
 
@@ -75,11 +74,5 @@ Fields: `path`, `title` (3x boost), `body`, `tags`, `dir`, `modified`, `hash`, `
 1. Add args struct in `src/cli/<name>.rs`
 2. Add variant to `Command` enum in `src/cli/mod.rs`
 3. Add `cmd_<name>()` handler in `src/main.rs`
-4. If logic is shared with MCP, extract to `src/service/mod.rs`
+4. If logic is reusable, extract to `src/service/mod.rs`
 5. Add integration tests in `tests/cli_tests.rs`
-
-## Adding an MCP Tool
-
-1. Add tool struct + handler in `src/mcp/mod.rs` (follow existing `VaultList` pattern)
-2. Register in `OvMcpServer` impl with `#[tool]` attribute
-3. Use service layer functions (not direct vault access)
