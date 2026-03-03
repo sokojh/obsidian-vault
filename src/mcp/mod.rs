@@ -1,6 +1,5 @@
 pub mod tools;
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use rmcp::handler::server::tool::ToolRouter;
@@ -8,10 +7,8 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::*;
 use rmcp::{tool, tool_handler, tool_router, ServerHandler};
 
-use crate::model::link::Backlink;
-use crate::model::note::NoteSummary;
-use crate::model::tag::TagSummary;
 use crate::search;
+use crate::service;
 use crate::vault::Vault;
 
 use tools::*;
@@ -79,39 +76,20 @@ impl OvMcpServer {
         Parameters(params): Parameters<ListParams>,
     ) -> Result<String, String> {
         let vault = self.open_vault()?;
-        let mut notes: Vec<NoteSummary> = vault
-            .read_all_notes()
-            .iter()
-            .map(NoteSummary::from)
-            .collect();
-
-        if let Some(ref dir) = params.dir {
-            notes.retain(|n| n.dir == *dir || n.dir.starts_with(&format!("{dir}/")));
-        }
-
-        if let Some(ref tag) = params.tag {
-            let tag_normalized = if tag.starts_with('#') {
-                tag.clone()
-            } else {
-                format!("#{tag}")
-            };
-            notes.retain(|n| n.tags.iter().any(|t| t == &tag_normalized));
-        }
-
-        match params.sort.as_deref() {
-            Some("title") => {
-                notes.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
-            }
-            Some("words") => notes.sort_by(|a, b| b.word_count.cmp(&a.word_count)),
-            _ => notes.sort_by(|a, b| b.modified.cmp(&a.modified)),
-        }
-
-        let limit = params.limit.unwrap_or(50);
-        notes.truncate(limit);
+        let svc_params = service::ListParams {
+            dir: params.dir,
+            tag: params.tag,
+            date: None,
+            sort: params.sort.unwrap_or_else(|| "modified".to_string()),
+            reverse: false,
+            limit: params.limit.unwrap_or(50),
+            offset: 0,
+        };
+        let result = service::list_notes(vault.notes(), &svc_params);
 
         serde_json::to_string_pretty(&serde_json::json!({
-            "count": notes.len(),
-            "notes": notes,
+            "count": result.notes.len(),
+            "notes": result.notes,
         }))
         .map_err(|e| e.to_string())
     }
@@ -122,35 +100,12 @@ impl OvMcpServer {
         Parameters(params): Parameters<TagsParams>,
     ) -> Result<String, String> {
         let vault = self.open_vault()?;
-        let notes = vault.read_all_notes();
-
-        let mut tag_map: HashMap<String, Vec<String>> = HashMap::new();
-        for note in &notes {
-            for tag in &note.tags {
-                tag_map
-                    .entry(tag.clone())
-                    .or_default()
-                    .push(note.title.clone());
-            }
-        }
-
-        let mut summaries: Vec<TagSummary> = tag_map
-            .into_iter()
-            .map(|(tag, notes)| TagSummary {
-                count: notes.len(),
-                tag,
-                notes,
-            })
-            .collect();
-
-        if let Some(min) = params.min_count {
-            summaries.retain(|s| s.count >= min);
-        }
-
-        match params.sort.as_deref() {
-            Some("name") => summaries.sort_by(|a, b| a.tag.cmp(&b.tag)),
-            _ => summaries.sort_by(|a, b| b.count.cmp(&a.count)),
-        }
+        let svc_params = service::TagsParams {
+            sort: params.sort.unwrap_or_else(|| "count".to_string()),
+            min_count: params.min_count,
+            limit: None,
+        };
+        let summaries = service::aggregate_tags(vault.notes(), &svc_params);
 
         serde_json::to_string_pretty(&serde_json::json!({
             "count": summaries.len(),
@@ -194,32 +149,9 @@ impl OvMcpServer {
             .to_string_lossy()
             .to_string();
 
-        let notes = vault.read_all_notes();
         let with_context = params.context.unwrap_or(false);
-        let mut backlinks: Vec<Backlink> = Vec::new();
-
-        for note in &notes {
-            for link in &note.links {
-                if link.target.eq_ignore_ascii_case(&target_stem) {
-                    let context = if with_context {
-                        note.body.as_ref().and_then(|body| {
-                            body.lines()
-                                .nth(link.line.saturating_sub(1))
-                                .map(|l| l.to_string())
-                        })
-                    } else {
-                        None
-                    };
-
-                    backlinks.push(Backlink {
-                        source: note.title.clone(),
-                        source_path: note.path.clone(),
-                        context,
-                        line: link.line,
-                    });
-                }
-            }
-        }
+        let backlinks =
+            service::find_backlinks(&vault.root, &target_stem, vault.notes(), with_context);
 
         serde_json::to_string_pretty(&serde_json::json!({
             "target": target_stem,
@@ -297,40 +229,9 @@ impl OvMcpServer {
     #[tool(description = "Get statistics about the Obsidian vault (note count, word count, top tags, etc.)")]
     async fn vault_stats(&self) -> Result<String, String> {
         let vault = self.open_vault()?;
-        let notes = vault.read_all_notes();
+        let stats = service::compute_stats(&vault, vault.notes());
 
-        let total_notes = notes.len();
-        let total_words: usize = notes.iter().map(|n| n.word_count).sum();
-        let total_links: usize = notes.iter().map(|n| n.links.len()).sum();
-
-        let mut all_tags: HashMap<String, usize> = HashMap::new();
-        for note in &notes {
-            for tag in &note.tags {
-                *all_tags.entry(tag.clone()).or_default() += 1;
-            }
-        }
-
-        let dirs = vault.directories();
-        let total_size: u64 = notes.iter().map(|n| n.file_meta.size).sum();
-
-        let mut sorted_tags: Vec<_> = all_tags.iter().collect();
-        sorted_tags.sort_by(|a, b| b.1.cmp(a.1));
-        let top_tags: Vec<_> = sorted_tags
-            .iter()
-            .take(10)
-            .map(|(tag, count)| serde_json::json!({"tag": tag, "count": count}))
-            .collect();
-
-        serde_json::to_string_pretty(&serde_json::json!({
-            "total_notes": total_notes,
-            "total_words": total_words,
-            "total_links": total_links,
-            "unique_tags": all_tags.len(),
-            "directories": dirs.len(),
-            "total_size_mb": format!("{:.1}", total_size as f64 / 1_048_576.0),
-            "top_tags": top_tags,
-        }))
-        .map_err(|e| e.to_string())
+        serde_json::to_string_pretty(&stats).map_err(|e| e.to_string())
     }
 }
 

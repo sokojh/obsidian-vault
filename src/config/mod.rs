@@ -1,7 +1,6 @@
 pub mod paths;
 
 use std::fs;
-use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -41,7 +40,4 @@ impl AppConfig {
         Ok(())
     }
 
-    pub fn vault_path(&self) -> Option<PathBuf> {
-        self.vault_path.as_ref().map(PathBuf::from)
-    }
 }

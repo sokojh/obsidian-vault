@@ -31,29 +31,5 @@ impl<T: Serialize> ApiResponse<T> {
         serde_json::to_string_pretty(self).unwrap_or_else(|_| "{}".to_string())
     }
 
-    pub fn to_json_compact(&self) -> String {
-        serde_json::to_string(self).unwrap_or_else(|_| "{}".to_string())
-    }
 }
 
-/// Error response
-#[derive(Debug, Serialize)]
-pub struct ErrorResponse {
-    pub ok: bool,
-    pub error: String,
-    pub code: i32,
-}
-
-impl ErrorResponse {
-    pub fn new(error: &str, code: i32) -> Self {
-        Self {
-            ok: false,
-            error: error.to_string(),
-            code,
-        }
-    }
-
-    pub fn to_json_string(&self) -> String {
-        serde_json::to_string_pretty(self).unwrap_or_else(|_| "{}".to_string())
-    }
-}

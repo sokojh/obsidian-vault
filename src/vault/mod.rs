@@ -2,6 +2,7 @@ pub mod config;
 pub mod scanner;
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
@@ -41,6 +42,7 @@ pub struct Vault {
     pub root: PathBuf,
     pub obsidian_config: config::ObsidianConfig,
     files: Vec<PathBuf>,
+    notes_cache: OnceLock<Vec<Note>>,
 }
 
 impl Vault {
@@ -57,22 +59,13 @@ impl Vault {
             root,
             obsidian_config,
             files,
+            notes_cache: OnceLock::new(),
         })
     }
 
     /// Get all scanned markdown file paths
     pub fn files(&self) -> &[PathBuf] {
         &self.files
-    }
-
-    /// Number of markdown files
-    pub fn file_count(&self) -> usize {
-        self.files.len()
-    }
-
-    /// Re-scan the vault
-    pub fn rescan(&mut self) {
-        self.files = scanner::scan_vault(&self.root, &[]);
     }
 
     /// Read and parse a single note by path (relative to vault root)
@@ -84,12 +77,14 @@ impl Vault {
         extract::extract_note(&self.root, &full_path)
     }
 
-    /// Read all notes (can be expensive for large vaults)
-    pub fn read_all_notes(&self) -> Vec<Note> {
-        self.files
-            .iter()
-            .filter_map(|f| extract::extract_note(&self.root, f).ok())
-            .collect()
+    /// Get all notes, cached after first access
+    pub fn notes(&self) -> &[Note] {
+        self.notes_cache.get_or_init(|| {
+            self.files
+                .iter()
+                .filter_map(|f| extract::extract_note(&self.root, f).ok())
+                .collect()
+        })
     }
 
     /// Resolve a note name to a path using fuzzy matching

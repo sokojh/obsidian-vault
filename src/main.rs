@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 mod cli;
 mod config;
 mod error;
@@ -9,9 +7,9 @@ mod mcp;
 mod model;
 mod output;
 mod search;
+mod service;
 mod vault;
 
-use std::collections::HashMap;
 use std::process;
 
 use clap::Parser;
@@ -19,14 +17,12 @@ use clap::Parser;
 use cli::{Cli, Command, OutputFormat};
 use config::paths;
 use error::OvError;
-use model::note::NoteSummary;
-use model::tag::TagSummary;
 use output::json::ApiResponse;
 use vault::Vault;
 
 fn main() {
     let cli = Cli::parse();
-    let format = cli.format.clone();
+    let format = cli.format;
 
     if let Err(e) = run(cli) {
         match format {
@@ -58,7 +54,7 @@ impl From<&Cli> for Ctx {
     fn from(cli: &Cli) -> Self {
         Self {
             vault: cli.vault.clone(),
-            format: cli.format.clone(),
+            format: cli.format,
             fields: cli.fields.clone(),
             quiet: cli.quiet,
         }
@@ -94,62 +90,23 @@ fn open_vault(ctx: &Ctx) -> Result<Vault, OvError> {
 
 fn cmd_list(ctx: &Ctx, args: cli::list::ListArgs) -> Result<(), OvError> {
     let vault = open_vault(ctx)?;
-    let mut notes: Vec<NoteSummary> = vault
-        .read_all_notes()
-        .iter()
-        .map(NoteSummary::from)
-        .collect();
-
-    // Filter by directory
-    if let Some(ref dir) = args.dir {
-        notes.retain(|n| n.dir == *dir || n.dir.starts_with(&format!("{dir}/")));
-    }
-
-    // Filter by tag
-    if let Some(ref tag) = args.tag {
-        let tag_normalized = if tag.starts_with('#') {
-            tag.clone()
-        } else {
-            format!("#{tag}")
-        };
-        notes.retain(|n| n.tags.iter().any(|t| t == &tag_normalized));
-    }
-
-    // Filter by date
-    if let Some(ref date) = args.date {
-        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-        let date_filter = match date.as_str() {
-            "today" => today,
-            _ => date.clone(),
-        };
-        notes.retain(|n| n.modified.starts_with(&date_filter));
-    }
-
-    // Sort
-    match args.sort.as_str() {
-        "title" => notes.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase())),
-        "size" | "words" => notes.sort_by(|a, b| b.word_count.cmp(&a.word_count)),
-        _ => notes.sort_by(|a, b| b.modified.cmp(&a.modified)),
-    }
-
-    if args.reverse {
-        notes.reverse();
-    }
-
-    // Pagination
-    let total = notes.len();
-    let notes: Vec<NoteSummary> = notes
-        .into_iter()
-        .skip(args.offset)
-        .take(args.limit)
-        .collect();
+    let params = service::ListParams {
+        dir: args.dir,
+        tag: args.tag,
+        date: args.date,
+        sort: args.sort.clone(),
+        reverse: args.reverse,
+        limit: args.limit,
+        offset: args.offset,
+    };
+    let result = service::list_notes(vault.notes(), &params);
 
     match ctx.format {
         OutputFormat::Human => {
-            output::human::print_note_list(&notes);
+            output::human::print_note_list(&result.notes);
         }
         OutputFormat::Jsonl => {
-            for note in &notes {
+            for note in &result.notes {
                 let json_val = serde_json::to_value(note).unwrap_or_default();
                 let line = if let Some(ref fields_str) = ctx.fields {
                     let field_names = output::fields::parse_fields(fields_str);
@@ -162,8 +119,8 @@ fn cmd_list(ctx: &Ctx, args: cli::list::ListArgs) -> Result<(), OvError> {
             }
         }
         OutputFormat::Json => {
-            let response = ApiResponse::success(&notes, notes.len())
-                .with_meta("total", serde_json::json!(total))
+            let response = ApiResponse::success(&result.notes, result.notes.len())
+                .with_meta("total", serde_json::json!(result.total))
                 .with_meta("offset", serde_json::json!(args.offset))
                 .with_meta("limit", serde_json::json!(args.limit));
 
@@ -225,39 +182,12 @@ fn cmd_read(ctx: &Ctx, args: cli::read::ReadArgs) -> Result<(), OvError> {
 
 fn cmd_tags(ctx: &Ctx, args: cli::tags::TagsArgs) -> Result<(), OvError> {
     let vault = open_vault(ctx)?;
-    let notes = vault.read_all_notes();
-
-    let mut tag_map: HashMap<String, Vec<String>> = HashMap::new();
-    for note in &notes {
-        for tag in &note.tags {
-            tag_map
-                .entry(tag.clone())
-                .or_default()
-                .push(note.title.clone());
-        }
-    }
-
-    let mut summaries: Vec<TagSummary> = tag_map
-        .into_iter()
-        .map(|(tag, notes)| TagSummary {
-            count: notes.len(),
-            tag,
-            notes,
-        })
-        .collect();
-
-    if let Some(min) = args.min_count {
-        summaries.retain(|s| s.count >= min);
-    }
-
-    match args.sort.as_str() {
-        "name" => summaries.sort_by(|a, b| a.tag.cmp(&b.tag)),
-        _ => summaries.sort_by(|a, b| b.count.cmp(&a.count)),
-    }
-
-    if let Some(limit) = args.limit {
-        summaries.truncate(limit);
-    }
+    let params = service::TagsParams {
+        sort: args.sort,
+        min_count: args.min_count,
+        limit: args.limit,
+    };
+    let summaries = service::aggregate_tags(vault.notes(), &params);
 
     let count = summaries.len();
     match ctx.format {
@@ -276,46 +206,7 @@ fn cmd_tags(ctx: &Ctx, args: cli::tags::TagsArgs) -> Result<(), OvError> {
 
 fn cmd_stats(ctx: &Ctx) -> Result<(), OvError> {
     let vault = open_vault(ctx)?;
-    let notes = vault.read_all_notes();
-
-    let total_notes = notes.len();
-    let total_words: usize = notes.iter().map(|n| n.word_count).sum();
-    let total_links: usize = notes.iter().map(|n| n.links.len()).sum();
-
-    let mut all_tags: HashMap<String, usize> = HashMap::new();
-    for note in &notes {
-        for tag in &note.tags {
-            *all_tags.entry(tag.clone()).or_default() += 1;
-        }
-    }
-
-    let dirs = vault.directories();
-    let total_size: u64 = notes.iter().map(|n| n.file_meta.size).sum();
-    let evicted: usize = notes.iter().filter(|n| n.file_meta.evicted).count();
-
-    // Sort tags by count for top_tags
-    let mut sorted_tags: Vec<_> = all_tags.iter().collect();
-    sorted_tags.sort_by(|a, b| b.1.cmp(a.1));
-    let top_tags: Vec<_> = sorted_tags
-        .iter()
-        .take(10)
-        .map(|(tag, count)| serde_json::json!({"tag": tag, "count": count}))
-        .collect();
-
-    let stats = serde_json::json!({
-        "total_notes": total_notes,
-        "total_words": total_words,
-        "total_links": total_links,
-        "unique_tags": all_tags.len(),
-        "directories": dirs.len(),
-        "total_size_bytes": total_size,
-        "total_size_mb": format!("{:.1}", total_size as f64 / 1_048_576.0),
-        "evicted_files": evicted,
-        "avg_words_per_note": if total_notes > 0 { total_words / total_notes } else { 0 },
-        "avg_links_per_note": if total_notes > 0 { total_links / total_notes } else { 0 },
-        "top_tags": top_tags,
-        "directory_list": dirs,
-    });
+    let stats = service::compute_stats(&vault, vault.notes());
 
     match ctx.format {
         OutputFormat::Human => {
@@ -375,34 +266,7 @@ fn cmd_backlinks(ctx: &Ctx, args: cli::links::BacklinksArgs) -> Result<(), OvErr
         .to_string_lossy()
         .to_string();
 
-    let notes = vault.read_all_notes();
-    let mut backlinks: Vec<model::link::Backlink> = Vec::new();
-
-    for note in &notes {
-        for link in &note.links {
-            if link.target.eq_ignore_ascii_case(&target_stem) {
-                let context = if args.context {
-                    // Read full file content for accurate line context
-                    let full_path = vault.root.join(&note.path);
-                    std::fs::read_to_string(&full_path).ok().and_then(|content| {
-                        content
-                            .lines()
-                            .nth(link.line.saturating_sub(1))
-                            .map(|l| l.trim().to_string())
-                    })
-                } else {
-                    None
-                };
-
-                backlinks.push(model::link::Backlink {
-                    source: note.title.clone(),
-                    source_path: note.path.clone(),
-                    context,
-                    line: link.line,
-                });
-            }
-        }
-    }
+    let backlinks = service::find_backlinks(&vault.root, &target_stem, vault.notes(), args.context);
 
     let count = backlinks.len();
     match ctx.format {
@@ -413,8 +277,8 @@ fn cmd_backlinks(ctx: &Ctx, args: cli::links::BacklinksArgs) -> Result<(), OvErr
                 println!("Backlinks to \"{target_stem}\":");
                 for bl in &backlinks {
                     print!("  <- {} ({}:{})", bl.source, bl.source_path, bl.line);
-                    if let Some(ref ctx) = bl.context {
-                        print!("  | {}", ctx.trim());
+                    if let Some(ref blctx) = bl.context {
+                        print!("  | {}", blctx.trim());
                     }
                     println!();
                 }
@@ -539,7 +403,7 @@ fn cmd_index(ctx: &Ctx, args: cli::index::IndexArgs) -> Result<(), OvError> {
             let result = index::writer::build_index(&vault, false)?;
 
             // Also build link index
-            let link_idx = index::link_index::LinkIndex::build(&vault);
+            let link_idx = index::link_index::LinkIndex::build(vault.notes());
             link_idx.save(&vault.root)?;
 
             match ctx.format {
@@ -567,7 +431,7 @@ fn cmd_index(ctx: &Ctx, args: cli::index::IndexArgs) -> Result<(), OvError> {
 
             match ctx.format {
                 OutputFormat::Human => {
-                    output::human::print_stats(&status);
+                    output::human::print_json_stats(&status);
                 }
                 _ => {
                     let response = ApiResponse::success(&status, 1);
@@ -591,9 +455,10 @@ fn cmd_index(ctx: &Ctx, args: cli::index::IndexArgs) -> Result<(), OvError> {
 
 fn cmd_graph(ctx: &Ctx, args: cli::graph::GraphArgs) -> Result<(), OvError> {
     let vault = open_vault(ctx)?;
+    let notes = vault.notes();
 
-    // Build link index (always fresh from vault)
-    let link_idx = index::link_index::LinkIndex::build(&vault);
+    // Build link index from cached notes (no double read)
+    let link_idx = index::link_index::LinkIndex::build(notes);
 
     if let Some(ref center) = args.center {
         // Subgraph from center
@@ -625,8 +490,8 @@ fn cmd_graph(ctx: &Ctx, args: cli::graph::GraphArgs) -> Result<(), OvError> {
             }
         }
     } else {
-        // Full graph
-        let graph = link_idx.to_graph(&vault);
+        // Full graph — reuse same notes slice (no second read)
+        let graph = link_idx.to_graph(notes);
 
         match args.graph_format.as_str() {
             "dot" => {

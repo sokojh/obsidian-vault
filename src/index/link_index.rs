@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::paths;
 use crate::error::OvResult;
 use crate::model::graph::{GraphEdge, GraphNode, VaultGraph};
-use crate::vault::Vault;
+use crate::model::note::Note;
 
 /// Bidirectional link index
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -26,13 +26,12 @@ pub struct LinkEntry {
 }
 
 impl LinkIndex {
-    /// Build link index from vault
-    pub fn build(vault: &Vault) -> Self {
-        let notes = vault.read_all_notes();
+    /// Build link index from notes
+    pub fn build(notes: &[Note]) -> Self {
         let mut outgoing: HashMap<String, Vec<LinkEntry>> = HashMap::new();
         let mut incoming: HashMap<String, Vec<LinkEntry>> = HashMap::new();
 
-        for note in &notes {
+        for note in notes {
             let stem = Path::new(&note.path)
                 .file_stem()
                 .unwrap_or_default()
@@ -72,28 +71,15 @@ impl LinkIndex {
         Ok(())
     }
 
-    /// Load link index from disk
-    pub fn load(vault_root: &Path) -> OvResult<Self> {
-        let index_dir = paths::vault_index_dir(vault_root);
-        let path = index_dir.join("links.json");
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-        let content = fs::read_to_string(path)?;
-        let index: LinkIndex = serde_json::from_str(&content)?;
-        Ok(index)
-    }
-
     /// Build full vault graph
-    pub fn to_graph(&self, vault: &Vault) -> VaultGraph {
-        let notes = vault.read_all_notes();
+    pub fn to_graph(&self, notes: &[Note]) -> VaultGraph {
         let mut nodes = Vec::new();
         let mut edges = Vec::new();
         let mut all_stems: HashSet<String> = HashSet::new();
         let mut degree_map: HashMap<String, (usize, usize)> = HashMap::new();
 
         // Build nodes from actual notes
-        for note in &notes {
+        for note in notes {
             let stem = Path::new(&note.path)
                 .file_stem()
                 .unwrap_or_default()

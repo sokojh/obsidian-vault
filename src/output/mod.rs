@@ -5,9 +5,8 @@ pub mod json;
 use serde::Serialize;
 
 use crate::cli::OutputFormat;
-use crate::error::OvError;
 
-use self::json::{ApiResponse, ErrorResponse};
+use self::json::ApiResponse;
 
 /// Print structured data in the requested format
 pub fn print_output<T: Serialize>(
@@ -61,15 +60,3 @@ pub fn print_output<T: Serialize>(
     }
 }
 
-/// Print error in the requested format
-pub fn print_error(error: &OvError, format: &OutputFormat) {
-    match format {
-        OutputFormat::Json | OutputFormat::Jsonl => {
-            let response = ErrorResponse::new(&error.to_string(), error.exit_code());
-            eprintln!("{}", response.to_json_string());
-        }
-        OutputFormat::Human => {
-            eprintln!("error: {error}");
-        }
-    }
-}

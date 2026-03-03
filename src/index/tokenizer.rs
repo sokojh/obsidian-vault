@@ -1,5 +1,5 @@
 use tantivy::tokenizer::{
-    BoxTokenStream, LowerCaser, SimpleTokenizer, TextAnalyzer, Token, TokenStream, Tokenizer,
+    BoxTokenStream, LowerCaser, TextAnalyzer, Token, TokenStream, Tokenizer,
 };
 
 const TOKENIZER_NAME: &str = "ov_cjk";
@@ -122,13 +122,6 @@ fn is_cjk(c: char) -> bool {
 /// Build a text analyzer with CJK bigram support
 pub fn build_text_analyzer() -> TextAnalyzer {
     TextAnalyzer::builder(CjkBigramTokenizer)
-        .filter(LowerCaser)
-        .build()
-}
-
-/// Build a simple text analyzer for non-CJK fields
-pub fn build_simple_analyzer() -> TextAnalyzer {
-    TextAnalyzer::builder(SimpleTokenizer::default())
         .filter(LowerCaser)
         .build()
 }
