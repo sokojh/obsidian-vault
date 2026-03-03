@@ -1,0 +1,61 @@
+[package]
+name = "obsidian-vault"
+version = "0.1.0"
+edition = "2021"
+description = "High-performance Obsidian vault CLI for terminal and AI integration"
+
+[[bin]]
+name = "ov"
+path = "src/main.rs"
+
+[dependencies]
+# CLI
+clap = { version = "4.5", features = ["derive", "env"] }
+
+# Pattern matching
+regex = "1"
+lazy_static = "1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+toml = "0.8"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Date/time
+chrono = { version = "0.4", features = ["serde"] }
+
+# File system
+walkdir = "2"
+dirs = "6"
+
+# Hashing
+blake3 = "1"
+
+# Fuzzy matching
+fuzzy-matcher = "0.3"
+
+# Search
+tantivy = "0.22"
+
+# MCP Server
+rmcp = { version = "0.17", features = ["server", "macros", "transport-io", "schemars"] }
+tokio = { version = "1", features = ["full"] }
+schemars = "1"
+
+# Output
+colored = "3"
+
+[dev-dependencies]
+tempfile = "3"
+assert_cmd = "2"
+predicates = "3"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
