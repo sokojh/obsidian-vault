@@ -1,4 +1,5 @@
 use clap::Args;
+use serde::Deserialize;
 
-#[derive(Args)]
+#[derive(Args, Deserialize, Default)]
 pub struct StatsArgs {}

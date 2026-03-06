@@ -1,5 +1,1 @@
-use clap::Args;
-
-#[derive(Args)]
-#[command(about = "Knowledge management guide — vault philosophy, structure, and best practices")]
-pub struct GuideArgs {}
+// Removed: guide command was human-oriented. Replaced by `ov schema skill`.

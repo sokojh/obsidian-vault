@@ -1,14 +1,11 @@
 use clap::Args;
+use serde::Deserialize;
 
-#[derive(Args)]
-#[command(after_long_help = "\x1b[1mExamples:\x1b[0m
-  ov append \"My Note\" --content \"추가 내용\"                       # Append to end
-  ov append \"My Note\" --section \"Timeline\" --content \"14:30 이벤트\"  # Insert under section
-  ov append \"My Note\" --date --content \"오늘의 기록\"               # Auto date heading
-  echo \"piped text\" | ov append \"My Note\" --stdin                 # From stdin")]
+#[derive(Args, Deserialize, Default)]
 pub struct AppendArgs {
-    /// Note name to append to (fuzzy matching supported)
-    pub note: String,
+    /// Note name to append to (exact match by default, use --fuzzy for fuzzy matching)
+    #[arg(long)]
+    pub note: Option<String>,
 
     /// Insert under this ## section heading instead of end of file
     #[arg(long)]
@@ -16,6 +13,7 @@ pub struct AppendArgs {
 
     /// Read content from stdin (piped input)
     #[arg(long)]
+    #[serde(default)]
     pub stdin: bool,
 
     /// Inline content text to append
@@ -24,5 +22,16 @@ pub struct AppendArgs {
 
     /// Prepend a ### YYYY-MM-DD date heading before the content
     #[arg(long)]
+    #[serde(default)]
     pub date: bool,
+
+    /// Enable fuzzy matching for note name resolution
+    #[arg(long)]
+    #[serde(default)]
+    pub fuzzy: bool,
+
+    /// Preview what would be appended without writing the file
+    #[arg(long)]
+    #[serde(default)]
+    pub dry_run: bool,
 }

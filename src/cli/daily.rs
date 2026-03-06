@@ -1,6 +1,7 @@
 use clap::Args;
+use serde::Deserialize;
 
-#[derive(Args)]
+#[derive(Args, Deserialize, Default)]
 pub struct DailyArgs {
     /// Target date in YYYY-MM-DD format (defaults to today)
     #[arg(long)]
@@ -8,5 +9,6 @@ pub struct DailyArgs {
 
     /// Preview what would be created without writing the file
     #[arg(long)]
+    #[serde(default)]
     pub dry_run: bool,
 }

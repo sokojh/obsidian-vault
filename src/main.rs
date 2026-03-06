@@ -13,31 +13,20 @@ use std::io::{Read, Write};
 use std::process;
 
 use clap::Parser;
+use serde::de::DeserializeOwned;
 
-use cli::{Cli, Command, OutputFormat};
+use cli::{Cli, Command};
 use config::paths;
 use error::OvError;
-use output::json::ApiResponse;
+use output::json::ErrorResponse;
 use vault::Vault;
 
 fn main() {
     let cli = Cli::parse();
-    let format = cli.format;
 
     if let Err(e) = run(cli) {
-        match format {
-            OutputFormat::Json | OutputFormat::Jsonl => {
-                let err_json = serde_json::json!({
-                    "ok": false,
-                    "error": e.to_string(),
-                    "code": e.exit_code(),
-                });
-                eprintln!("{}", serde_json::to_string(&err_json).unwrap_or_default());
-            }
-            OutputFormat::Human => {
-                eprintln!("error: {e}");
-            }
-        }
+        let err_resp = ErrorResponse::from_error(&e);
+        eprintln!("{}", err_resp.to_json_string());
         process::exit(e.exit_code());
     }
 }
@@ -45,39 +34,103 @@ fn main() {
 /// Shared context extracted from Cli for command handlers
 struct Ctx {
     vault: Option<String>,
-    format: OutputFormat,
+    jsonl: bool,
     fields: Option<String>,
-    quiet: bool,
 }
 
 impl From<&Cli> for Ctx {
     fn from(cli: &Cli) -> Self {
         Self {
             vault: cli.vault.clone(),
-            format: cli.format,
+            jsonl: cli.jsonl,
             fields: cli.fields.clone(),
-            quiet: cli.quiet,
         }
     }
 }
 
+/// Parse JSON input string into the specified Args type
+fn parse_json_input<T: DeserializeOwned>(json_str: &str) -> Result<T, OvError> {
+    let sanitized = sanitize_input(json_str);
+    serde_json::from_str(&sanitized).map_err(|e| {
+        OvError::InvalidInput(format!("Invalid JSON payload: {e}"))
+    })
+}
+
+/// Strip control characters (U+0000..U+001F except \n, \r, \t) from input
+fn sanitize_input(s: &str) -> String {
+    s.chars()
+        .filter(|c| !c.is_control() || *c == '\n' || *c == '\r' || *c == '\t')
+        .collect()
+}
+
+/// Require a field from an Option, returning MissingField error if None
+fn require_field<T>(value: Option<T>, field_name: &str) -> Result<T, OvError> {
+    value.ok_or_else(|| OvError::MissingField(field_name.to_string()))
+}
+
 fn run(cli: Cli) -> Result<(), OvError> {
     let ctx = Ctx::from(&cli);
+    let json_input = cli.json.as_deref();
+
     match cli.command {
-        Command::List(args) => cmd_list(&ctx, args),
-        Command::Read(args) => cmd_read(&ctx, args),
-        Command::Tags(args) => cmd_tags(&ctx, args),
+        Command::List(args) => {
+            let args = merge_or_use(json_input, args)?;
+            cmd_list(&ctx, args)
+        }
+        Command::Read(args) => {
+            let args = merge_or_use(json_input, args)?;
+            cmd_read(&ctx, args)
+        }
+        Command::Tags(args) => {
+            let args = merge_or_use(json_input, args)?;
+            cmd_tags(&ctx, args)
+        }
         Command::Stats(_) => cmd_stats(&ctx),
-        Command::Links(args) => cmd_links(&ctx, args),
-        Command::Backlinks(args) => cmd_backlinks(&ctx, args),
-        Command::Config(args) => cmd_config(&ctx, args),
-        Command::Search(args) => cmd_search(&ctx, args),
-        Command::Graph(args) => cmd_graph(&ctx, args),
-        Command::Daily(args) => cmd_daily(&ctx, args),
-        Command::Create(args) => cmd_create(&ctx, args),
-        Command::Append(args) => cmd_append(&ctx, args),
+        Command::Links(args) => {
+            let args = merge_or_use(json_input, args)?;
+            cmd_links(&ctx, args)
+        }
+        Command::Backlinks(args) => {
+            let args = merge_or_use(json_input, args)?;
+            cmd_backlinks(&ctx, args)
+        }
+        Command::Config(args) => {
+            let args = merge_or_use(json_input, args)?;
+            cmd_config(&ctx, args)
+        }
+        Command::Search(args) => {
+            let args = merge_or_use(json_input, args)?;
+            cmd_search(&ctx, args)
+        }
+        Command::Graph(args) => {
+            let args = merge_or_use(json_input, args)?;
+            cmd_graph(&ctx, args)
+        }
+        Command::Daily(args) => {
+            let args = merge_or_use(json_input, args)?;
+            cmd_daily(&ctx, args)
+        }
+        Command::Create(args) => {
+            let args = merge_or_use(json_input, args)?;
+            cmd_create(&ctx, args)
+        }
+        Command::Append(args) => {
+            let args = merge_or_use(json_input, args)?;
+            cmd_append(&ctx, args)
+        }
         Command::Index(args) => cmd_index(&ctx, args),
-        Command::Guide(_) => cmd_guide(),
+        Command::Schema(args) => cmd_schema(&ctx, args),
+    }
+}
+
+/// If --json is provided, parse it; otherwise use clap-parsed args
+fn merge_or_use<T: DeserializeOwned>(
+    json_input: Option<&str>,
+    clap_args: T,
+) -> Result<T, OvError> {
+    match json_input {
+        Some(json_str) => parse_json_input(json_str),
+        None => Ok(clap_args),
     }
 }
 
@@ -94,60 +147,35 @@ fn cmd_list(ctx: &Ctx, args: cli::list::ListArgs) -> Result<(), OvError> {
         dir: args.dir,
         tag: args.tag,
         date: args.date,
-        sort: args.sort.clone(),
+        sort: args.sort,
         reverse: args.reverse,
         limit: args.limit,
         offset: args.offset,
     };
 
-    // Try index-first (no file I/O), fall back to full scan
     let result = if let Some(summaries) = index::reader::read_all_from_index(&vault_path) {
         service::list_summaries(&summaries, &params)
     } else {
         let vault = Vault::open(vault_path)?;
-        if !ctx.quiet {
-            eprintln!("hint: run `ov index build` for faster queries");
-        }
         service::list_notes(vault.notes(), &params)
     };
 
-    match ctx.format {
-        OutputFormat::Human => {
-            output::human::print_note_list(&result.notes);
-        }
-        OutputFormat::Jsonl => {
-            for note in &result.notes {
-                let json_val = serde_json::to_value(note).unwrap_or_default();
-                let line = if let Some(ref fields_str) = ctx.fields {
-                    let field_names = output::fields::parse_fields(fields_str);
-                    let filtered = output::fields::filter_fields(&json_val, &field_names);
-                    serde_json::to_string(&filtered).unwrap_or_default()
-                } else {
-                    serde_json::to_string(&json_val).unwrap_or_default()
-                };
-                println!("{line}");
-            }
-        }
-        OutputFormat::Json => {
-            let response = ApiResponse::success(&result.notes, result.notes.len())
-                .with_meta("total", serde_json::json!(result.total))
-                .with_meta("offset", serde_json::json!(args.offset))
-                .with_meta("limit", serde_json::json!(args.limit));
-
-            let json_val = serde_json::to_value(&response).unwrap_or_default();
-            let output_str = if let Some(ref fields_str) = ctx.fields {
-                let field_names = output::fields::parse_fields(fields_str);
-                let mut filtered = json_val;
-                if let Some(data) = filtered.get_mut("data") {
-                    *data = output::fields::filter_fields(data, &field_names);
-                }
-                serde_json::to_string_pretty(&filtered).unwrap_or_default()
-            } else {
-                serde_json::to_string_pretty(&json_val).unwrap_or_default()
-            };
-            println!("{output_str}");
-        }
-    }
+    let meta = vec![
+        ("total", serde_json::json!(result.total)),
+        ("offset", serde_json::json!(args.offset)),
+        ("limit", serde_json::json!(args.limit)),
+        (
+            "has_more",
+            serde_json::json!(args.offset + result.notes.len() < result.total),
+        ),
+    ];
+    output::print_with_meta(
+        &result.notes,
+        result.notes.len(),
+        ctx.jsonl,
+        &ctx.fields,
+        meta,
+    );
 
     Ok(())
 }
@@ -155,8 +183,9 @@ fn cmd_list(ctx: &Ctx, args: cli::list::ListArgs) -> Result<(), OvError> {
 // ─── read ────────────────────────────────────────────────────────────────
 
 fn cmd_read(ctx: &Ctx, args: cli::read::ReadArgs) -> Result<(), OvError> {
+    let note_name = require_field(args.note.as_deref().map(String::from), "note")?;
     let vault = open_vault(ctx)?;
-    let file_path = vault.resolve_note(&args.note)?;
+    let file_path = vault.resolve_note_with_mode(&note_name, args.fuzzy)?;
     let relative = vault.relative_path(&file_path);
     let note = vault.read_note(&relative)?;
 
@@ -167,23 +196,11 @@ fn cmd_read(ctx: &Ctx, args: cli::read::ReadArgs) -> Result<(), OvError> {
         return Ok(());
     }
 
-    match ctx.format {
-        OutputFormat::Human => {
-            output::human::print_note_detail(
-                &note.title,
-                &note.path,
-                &note.tags,
-                note.body.as_deref().unwrap_or(""),
-            );
-        }
-        _ => {
-            let mut note_output = note;
-            if !args.body {
-                note_output.body = None;
-            }
-            output::print_output(note_output, 1, &ctx.format, &ctx.fields);
-        }
+    let mut note_output = note;
+    if args.no_body {
+        note_output.body = None;
     }
+    output::print_output(note_output, 1, ctx.jsonl, &ctx.fields);
 
     Ok(())
 }
@@ -202,21 +219,11 @@ fn cmd_tags(ctx: &Ctx, args: cli::tags::TagsArgs) -> Result<(), OvError> {
         service::aggregate_tags_from_summaries(&idx_summaries, &params)
     } else {
         let vault = Vault::open(vault_path)?;
-        if !ctx.quiet {
-            eprintln!("hint: run `ov index build` for faster queries");
-        }
         service::aggregate_tags(vault.notes(), &params)
     };
 
     let count = summaries.len();
-    match ctx.format {
-        OutputFormat::Human => {
-            output::human::print_tag_list(&summaries);
-        }
-        _ => {
-            output::print_output(summaries, count, &ctx.format, &ctx.fields);
-        }
-    }
+    output::print_output(summaries, count, ctx.jsonl, &ctx.fields);
 
     Ok(())
 }
@@ -231,21 +238,10 @@ fn cmd_stats(ctx: &Ctx) -> Result<(), OvError> {
         service::compute_stats_from_summaries(vault.directories(), &idx_summaries)
     } else {
         let vault = Vault::open(vault_path)?;
-        if !ctx.quiet {
-            eprintln!("hint: run `ov index build` for faster queries");
-        }
         service::compute_stats(&vault, vault.notes())
     };
 
-    match ctx.format {
-        OutputFormat::Human => {
-            output::human::print_stats(&stats);
-        }
-        _ => {
-            let response = ApiResponse::success(&stats, 1);
-            println!("{}", response.to_json_string());
-        }
-    }
+    output::print_output(&stats, 1, ctx.jsonl, &ctx.fields);
 
     Ok(())
 }
@@ -253,33 +249,14 @@ fn cmd_stats(ctx: &Ctx) -> Result<(), OvError> {
 // ─── links ───────────────────────────────────────────────────────────────
 
 fn cmd_links(ctx: &Ctx, args: cli::links::LinksArgs) -> Result<(), OvError> {
+    let note_name = require_field(args.note, "note")?;
     let vault = open_vault(ctx)?;
-    let file_path = vault.resolve_note(&args.note)?;
+    let file_path = vault.resolve_note_with_mode(&note_name, args.fuzzy)?;
     let relative = vault.relative_path(&file_path);
     let note = vault.read_note(&relative)?;
 
     let count = note.links.len();
-    match ctx.format {
-        OutputFormat::Human => {
-            if note.links.is_empty() {
-                println!("No outgoing links.");
-            } else {
-                println!("Outgoing links from \"{}\":", note.title);
-                for link in &note.links {
-                    let kind = if link.is_embed { "embed" } else { "link" };
-                    let alias = link
-                        .alias
-                        .as_ref()
-                        .map(|a| format!(" ({a})"))
-                        .unwrap_or_default();
-                    println!("  [{kind}] [[{}]]{alias} (line {})", link.target, link.line);
-                }
-            }
-        }
-        _ => {
-            output::print_output(&note.links, count, &ctx.format, &ctx.fields);
-        }
-    }
+    output::print_output(&note.links, count, ctx.jsonl, &ctx.fields);
 
     Ok(())
 }
@@ -287,36 +264,20 @@ fn cmd_links(ctx: &Ctx, args: cli::links::LinksArgs) -> Result<(), OvError> {
 // ─── backlinks ───────────────────────────────────────────────────────────
 
 fn cmd_backlinks(ctx: &Ctx, args: cli::links::BacklinksArgs) -> Result<(), OvError> {
+    let note_name = require_field(args.note, "note")?;
     let vault = open_vault(ctx)?;
-    let file_path = vault.resolve_note(&args.note)?;
+    let file_path = vault.resolve_note_with_mode(&note_name, args.fuzzy)?;
     let target_stem = file_path
         .file_stem()
         .unwrap_or_default()
         .to_string_lossy()
         .to_string();
 
-    let backlinks = service::find_backlinks(&vault.root, &target_stem, vault.notes(), args.context);
+    let backlinks =
+        service::find_backlinks(&vault.root, &target_stem, vault.notes(), args.context);
 
     let count = backlinks.len();
-    match ctx.format {
-        OutputFormat::Human => {
-            if backlinks.is_empty() {
-                println!("No backlinks found for \"{target_stem}\".");
-            } else {
-                println!("Backlinks to \"{target_stem}\":");
-                for bl in &backlinks {
-                    print!("  <- {} ({}:{})", bl.source, bl.source_path, bl.line);
-                    if let Some(ref blctx) = bl.context {
-                        print!("  | {}", blctx.trim());
-                    }
-                    println!();
-                }
-            }
-        }
-        _ => {
-            output::print_output(&backlinks, count, &ctx.format, &ctx.fields);
-        }
-    }
+    output::print_output(&backlinks, count, ctx.jsonl, &ctx.fields);
 
     Ok(())
 }
@@ -327,49 +288,44 @@ fn cmd_config(ctx: &Ctx, args: cli::config::ConfigArgs) -> Result<(), OvError> {
     let mut app_config = config::AppConfig::load()?;
 
     match (args.key.as_deref(), args.value.as_deref()) {
-        (None, None) => match ctx.format {
-            OutputFormat::Human => {
-                println!("Config file: {}", paths::config_path().display());
-                println!(
-                    "  vault_path: {}",
-                    app_config.vault_path.as_deref().unwrap_or("(auto-detect)")
-                );
-                println!(
-                    "  default_format: {}",
-                    app_config.default_format.as_deref().unwrap_or("human")
-                );
-            }
-            _ => {
-                let json = serde_json::to_value(&app_config).unwrap_or_default();
-                let response = ApiResponse::success(&json, 1);
-                println!("{}", response.to_json_string());
-            }
-        },
-        (Some(key), None) => match key {
-            "vault_path" => println!(
-                "{}",
-                app_config.vault_path.as_deref().unwrap_or("(not set)")
-            ),
-            "default_format" => println!(
-                "{}",
-                app_config.default_format.as_deref().unwrap_or("human")
-            ),
-            _ => eprintln!("Unknown config key: {key}"),
-        },
+        (None, None) => {
+            let json = serde_json::to_value(&app_config).unwrap_or_default();
+            output::print_output(&json, 1, ctx.jsonl, &ctx.fields);
+        }
+        (Some(key), None) => {
+            let value = match key {
+                "vault_path" => app_config
+                    .vault_path
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_string(),
+                _ => {
+                    return Err(OvError::InvalidInput(format!("Unknown config key: {key}")));
+                }
+            };
+            let data = serde_json::json!({ "key": key, "value": value });
+            output::print_output(&data, 1, ctx.jsonl, &ctx.fields);
+        }
         (Some(key), Some(value)) => {
             match key {
                 "vault_path" => app_config.vault_path = Some(value.to_string()),
-                "default_format" => app_config.default_format = Some(value.to_string()),
                 _ => {
-                    return Err(OvError::General(format!("Unknown config key: {key}")));
+                    return Err(OvError::InvalidInput(format!("Unknown config key: {key}")));
                 }
             }
             app_config.save()?;
-            if !ctx.quiet {
-                eprintln!("Config updated: {key} = {value}");
-            }
+            let data = serde_json::json!({
+                "action": "updated",
+                "key": key,
+                "value": value,
+            });
+            output::print_output(&data, 1, ctx.jsonl, &ctx.fields);
         }
-        _ => {}
+        (None, Some(_)) => {
+            return Err(OvError::InvalidInput(
+                "value requires key".to_string(),
+            ));
+        }
     }
 
     Ok(())
@@ -378,48 +334,24 @@ fn cmd_config(ctx: &Ctx, args: cli::config::ConfigArgs) -> Result<(), OvError> {
 // ─── search ──────────────────────────────────────────────────────────────
 
 fn cmd_search(ctx: &Ctx, args: cli::search::SearchArgs) -> Result<(), OvError> {
+    let query = require_field(args.query, "query")?;
     let vault_path = paths::resolve_vault_path(ctx.vault.as_deref())?;
-    let results = search::search(
-        &vault_path,
-        &args.query,
-        args.limit,
-        args.offset,
-        args.snippet,
-    )?;
+    let mut results =
+        search::search(&vault_path, &query, args.limit, args.offset, args.snippet)?;
+
+    // search returns limit+1 to detect has_more
+    let has_more = results.len() > args.limit;
+    if has_more {
+        results.truncate(args.limit);
+    }
 
     let count = results.len();
-    match ctx.format {
-        OutputFormat::Human => {
-            use colored::Colorize;
-            if results.is_empty() {
-                println!("No results found.");
-            } else {
-                for hit in &results {
-                    println!(
-                        "{} {} {}",
-                        hit.title.cyan().bold(),
-                        format!("({:.2})", hit.score).dimmed(),
-                        hit.path.dimmed()
-                    );
-                    if !hit.tags.is_empty() {
-                        println!("  Tags: {}", hit.tags.join(" ").yellow());
-                    }
-                    if let Some(ref snippet) = hit.snippet {
-                        // Convert HTML snippet to plain text with markers
-                        let plain = snippet
-                            .replace("<b>", "\x1b[1;33m")
-                            .replace("</b>", "\x1b[0m");
-                        println!("  {plain}");
-                    }
-                    println!();
-                }
-                println!("{count} results");
-            }
-        }
-        _ => {
-            output::print_output(&results, count, &ctx.format, &ctx.fields);
-        }
-    }
+    let meta = vec![
+        ("offset", serde_json::json!(args.offset)),
+        ("limit", serde_json::json!(args.limit)),
+        ("has_more", serde_json::json!(has_more)),
+    ];
+    output::print_with_meta(&results, count, ctx.jsonl, &ctx.fields, meta);
 
     Ok(())
 }
@@ -430,54 +362,29 @@ fn cmd_index(ctx: &Ctx, args: cli::index::IndexArgs) -> Result<(), OvError> {
     match args.action {
         cli::index::IndexAction::Build => {
             let vault = open_vault(ctx)?;
-            if !ctx.quiet {
-                eprintln!("Building index for {}...", vault.root.display());
-            }
             let result = index::writer::build_index(&vault, false)?;
-
-            // Also build link index
             let link_idx = index::link_index::LinkIndex::build(vault.notes());
             link_idx.save(&vault.root)?;
 
-            match ctx.format {
-                OutputFormat::Human => {
-                    eprintln!(
-                        "Indexed {} files ({} new, {} unchanged) in {}ms",
-                        result.total, result.indexed, result.skipped, result.elapsed_ms
-                    );
-                }
-                _ => {
-                    let data = serde_json::json!({
-                        "indexed": result.indexed,
-                        "skipped": result.skipped,
-                        "total": result.total,
-                        "elapsed_ms": result.elapsed_ms,
-                    });
-                    let response = ApiResponse::success(&data, 1);
-                    println!("{}", response.to_json_string());
-                }
-            }
+            let data = serde_json::json!({
+                "action": "built",
+                "indexed": result.indexed,
+                "skipped": result.skipped,
+                "total": result.total,
+                "elapsed_ms": result.elapsed_ms,
+            });
+            output::print_output(&data, 1, ctx.jsonl, &ctx.fields);
         }
         cli::index::IndexAction::Status => {
             let vault_path = paths::resolve_vault_path(ctx.vault.as_deref())?;
             let status = index::writer::index_status(&vault_path)?;
-
-            match ctx.format {
-                OutputFormat::Human => {
-                    output::human::print_json_stats(&status);
-                }
-                _ => {
-                    let response = ApiResponse::success(&status, 1);
-                    println!("{}", response.to_json_string());
-                }
-            }
+            output::print_output(&status, 1, ctx.jsonl, &ctx.fields);
         }
         cli::index::IndexAction::Clear => {
             let vault_path = paths::resolve_vault_path(ctx.vault.as_deref())?;
             index::writer::clear_index(&vault_path)?;
-            if !ctx.quiet {
-                eprintln!("Index cleared.");
-            }
+            let data = serde_json::json!({ "action": "cleared" });
+            output::print_output(&data, 1, ctx.jsonl, &ctx.fields);
         }
     }
 
@@ -489,13 +396,10 @@ fn cmd_index(ctx: &Ctx, args: cli::index::IndexArgs) -> Result<(), OvError> {
 fn cmd_graph(ctx: &Ctx, args: cli::graph::GraphArgs) -> Result<(), OvError> {
     let vault = open_vault(ctx)?;
     let notes = vault.notes();
-
-    // Build link index from cached notes (no double read)
     let link_idx = index::link_index::LinkIndex::build(notes);
 
     if let Some(ref center) = args.center {
-        // Subgraph from center
-        let resolved = vault.resolve_note(center)?;
+        let resolved = vault.resolve_note_with_mode(center, args.fuzzy)?;
         let stem = resolved
             .file_stem()
             .unwrap_or_default()
@@ -506,10 +410,14 @@ fn cmd_graph(ctx: &Ctx, args: cli::graph::GraphArgs) -> Result<(), OvError> {
 
         match args.graph_format.as_str() {
             "dot" => {
-                println!("{}", index::link_index::to_dot(&nodes, &edges));
+                let dot_str = index::link_index::to_dot(&nodes, &edges);
+                let data = serde_json::json!({ "format": "dot", "content": dot_str });
+                output::print_output(&data, nodes.len(), ctx.jsonl, &ctx.fields);
             }
             "mermaid" => {
-                println!("{}", index::link_index::to_mermaid(&nodes, &edges));
+                let mermaid_str = index::link_index::to_mermaid(&nodes, &edges);
+                let data = serde_json::json!({ "format": "mermaid", "content": mermaid_str });
+                output::print_output(&data, nodes.len(), ctx.jsonl, &ctx.fields);
             }
             _ => {
                 let data = serde_json::json!({
@@ -518,12 +426,10 @@ fn cmd_graph(ctx: &Ctx, args: cli::graph::GraphArgs) -> Result<(), OvError> {
                     "nodes": nodes,
                     "edges": edges.iter().map(|(s, t)| serde_json::json!({"source": s, "target": t})).collect::<Vec<_>>(),
                 });
-                let response = ApiResponse::success(&data, nodes.len());
-                println!("{}", response.to_json_string());
+                output::print_output(&data, nodes.len(), ctx.jsonl, &ctx.fields);
             }
         }
     } else {
-        // Full graph — reuse same notes slice (no second read)
         let graph = link_idx.to_graph(notes);
 
         match args.graph_format.as_str() {
@@ -534,7 +440,9 @@ fn cmd_graph(ctx: &Ctx, args: cli::graph::GraphArgs) -> Result<(), OvError> {
                     .iter()
                     .map(|e| (e.source.clone(), e.target.clone()))
                     .collect();
-                println!("{}", index::link_index::to_dot(&nodes, &edges));
+                let dot_str = index::link_index::to_dot(&nodes, &edges);
+                let data = serde_json::json!({ "format": "dot", "content": dot_str });
+                output::print_output(&data, graph.nodes.len(), ctx.jsonl, &ctx.fields);
             }
             "mermaid" => {
                 let nodes: Vec<String> = graph.nodes.iter().map(|n| n.id.clone()).collect();
@@ -543,11 +451,12 @@ fn cmd_graph(ctx: &Ctx, args: cli::graph::GraphArgs) -> Result<(), OvError> {
                     .iter()
                     .map(|e| (e.source.clone(), e.target.clone()))
                     .collect();
-                println!("{}", index::link_index::to_mermaid(&nodes, &edges));
+                let mermaid_str = index::link_index::to_mermaid(&nodes, &edges);
+                let data = serde_json::json!({ "format": "mermaid", "content": mermaid_str });
+                output::print_output(&data, graph.nodes.len(), ctx.jsonl, &ctx.fields);
             }
             _ => {
-                let response = ApiResponse::success(&graph, graph.nodes.len());
-                println!("{}", response.to_json_string());
+                output::print_output(&graph, graph.nodes.len(), ctx.jsonl, &ctx.fields);
             }
         }
     }
@@ -572,62 +481,29 @@ fn cmd_daily(ctx: &Ctx, args: cli::daily::DailyArgs) -> Result<(), OvError> {
     let full_path = vault.root.join(&relative);
 
     if full_path.exists() {
-        // Read existing daily note
         let note = vault.read_note(&relative)?;
-        match ctx.format {
-            OutputFormat::Human => {
-                output::human::print_note_detail(
-                    &note.title,
-                    &note.path,
-                    &note.tags,
-                    note.body.as_deref().unwrap_or(""),
-                );
-            }
-            _ => {
-                output::print_output(note, 1, &ctx.format, &ctx.fields);
-            }
-        }
+        output::print_output(note, 1, ctx.jsonl, &ctx.fields);
     } else if args.dry_run {
-        match ctx.format {
-            OutputFormat::Human => {
-                println!("Would create: {relative}");
-                println!("# {date}\n\n## Notes\n");
-            }
-            _ => {
-                let data = serde_json::json!({
-                    "action": "create",
-                    "path": relative,
-                    "dry_run": true,
-                });
-                let response = ApiResponse::success(&data, 1);
-                println!("{}", response.to_json_string());
-            }
-        }
+        let data = serde_json::json!({
+            "action": "would_create",
+            "path": relative,
+            "date": date,
+            "dry_run": true,
+        });
+        output::print_output(&data, 1, ctx.jsonl, &ctx.fields);
     } else {
-        // Create daily note
         let dir_path = vault.root.join(daily_dir);
         std::fs::create_dir_all(&dir_path)?;
 
         let content = format!("# {date}\n\n## Notes\n\n");
         std::fs::write(&full_path, &content)?;
 
-        if !ctx.quiet {
-            eprintln!("Created daily note: {relative}");
-        }
-
-        match ctx.format {
-            OutputFormat::Human => {
-                println!("Created: {relative}");
-            }
-            _ => {
-                let data = serde_json::json!({
-                    "action": "created",
-                    "path": relative,
-                });
-                let response = ApiResponse::success(&data, 1);
-                println!("{}", response.to_json_string());
-            }
-        }
+        let data = serde_json::json!({
+            "action": "created",
+            "path": relative,
+            "date": date,
+        });
+        output::print_output(&data, 1, ctx.jsonl, &ctx.fields);
     }
 
     Ok(())
@@ -635,28 +511,43 @@ fn cmd_daily(ctx: &Ctx, args: cli::daily::DailyArgs) -> Result<(), OvError> {
 
 // ─── create ──────────────────────────────────────────────────────────────
 
-/// Sanitize title for use as filename. Rejects dangerous characters.
+/// Truncate content at a char boundary (safe for multibyte UTF-8)
+fn truncate_content(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 fn sanitize_title(title: &str) -> Result<String, OvError> {
     if title.contains('\0') {
-        return Err(OvError::General("Title contains null byte".to_string()));
+        return Err(OvError::InvalidInput(
+            "Title contains null byte".to_string(),
+        ));
     }
     if title.contains('/') || title.contains('\\') {
-        return Err(OvError::General(
+        return Err(OvError::InvalidInput(
             "Title cannot contain path separators (/ or \\)".to_string(),
         ));
     }
     if title == "." || title == ".." {
-        return Err(OvError::General("Title cannot be '.' or '..'".to_string()));
+        return Err(OvError::InvalidInput(
+            "Title cannot be '.' or '..'".to_string(),
+        ));
     }
-    // Strip .md extension if user accidentally included it
     let clean = title.strip_suffix(".md").unwrap_or(title);
     if clean.is_empty() {
-        return Err(OvError::General("Title cannot be empty".to_string()));
+        return Err(OvError::InvalidInput(
+            "Title cannot be empty".to_string(),
+        ));
     }
-    // Check filename length (255 bytes max on most filesystems)
     let filename = format!("{clean}.md");
     if filename.len() > 255 {
-        return Err(OvError::General(format!(
+        return Err(OvError::InvalidInput(format!(
             "Filename too long ({} bytes, max 255): {filename}",
             filename.len()
         )));
@@ -664,8 +555,6 @@ fn sanitize_title(title: &str) -> Result<String, OvError> {
     Ok(clean.to_string())
 }
 
-/// Validate that the resolved path stays within vault root.
-/// Checks both logical path (component walk) and physical path (post-mkdir canonicalize).
 fn validate_path_safety(
     vault_root: &std::path::Path,
     relative: &str,
@@ -675,7 +564,6 @@ fn validate_path_safety(
         .canonicalize()
         .map_err(|e| OvError::General(format!("Cannot canonicalize vault root: {e}")))?;
 
-    // Phase 1: logical path check (before any I/O)
     let mut normalized = canonical_root.clone();
     for component in std::path::Path::new(relative).components() {
         match component {
@@ -685,16 +573,15 @@ fn validate_path_safety(
             std::path::Component::Normal(c) => {
                 normalized.push(c);
             }
-            _ => {} // skip CurDir, Prefix, RootDir
+            _ => {}
         }
     }
     if !normalized.starts_with(&canonical_root) {
-        return Err(OvError::General(format!(
+        return Err(OvError::InvalidInput(format!(
             "Path escapes vault boundary: {relative}"
         )));
     }
 
-    // Phase 2: physical path check (after mkdir, catches symlink escape)
     if parent.exists() {
         let canonical_parent = parent.canonicalize().map_err(|e| {
             OvError::General(format!(
@@ -703,7 +590,7 @@ fn validate_path_safety(
             ))
         })?;
         if !canonical_parent.starts_with(&canonical_root) {
-            return Err(OvError::General(format!(
+            return Err(OvError::InvalidInput(format!(
                 "Path escapes vault boundary (symlink): {relative}"
             )));
         }
@@ -712,7 +599,6 @@ fn validate_path_safety(
     Ok(())
 }
 
-/// Append `## Heading` sections to content string.
 fn append_sections(content: &mut String, sections_str: &str) {
     for heading in sections_str.split(',') {
         let heading = heading.trim();
@@ -722,7 +608,6 @@ fn append_sections(content: &mut String, sections_str: &str) {
     }
 }
 
-/// Append body text to content string with proper newline handling.
 fn append_body(content: &mut String, body: &str) {
     if body.is_empty() {
         return;
@@ -736,7 +621,6 @@ fn append_body(content: &mut String, body: &str) {
     }
 }
 
-/// Atomic file write with cleanup on failure.
 fn atomic_write_new(path: &std::path::Path, content: &[u8], relative: &str) -> Result<(), OvError> {
     let mut file = std::fs::OpenOptions::new()
         .write(true)
@@ -744,14 +628,13 @@ fn atomic_write_new(path: &std::path::Path, content: &[u8], relative: &str) -> R
         .open(path)
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::AlreadyExists {
-                OvError::General(format!("Note already exists: {relative}"))
+                OvError::AlreadyExists(relative.to_string())
             } else {
                 OvError::General(format!("Cannot create {relative}: {e}"))
             }
         })?;
 
     if let Err(e) = file.write_all(content).and_then(|_| file.sync_all()) {
-        // Clean up partial file on write failure
         let _ = std::fs::remove_file(path);
         return Err(OvError::General(format!("Failed to write {relative}: {e}")));
     }
@@ -760,12 +643,24 @@ fn atomic_write_new(path: &std::path::Path, content: &[u8], relative: &str) -> R
 }
 
 fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
+    let title = require_field(args.title, "title")?;
+
+    // Validate constraints that clap enforces for flag-based input but not for --json
+    if args.template.is_some() && args.frontmatter.is_some() {
+        return Err(OvError::InvalidInput(
+            "template and frontmatter are mutually exclusive".to_string(),
+        ));
+    }
+    if args.vars.is_some() && args.template.is_none() {
+        return Err(OvError::InvalidInput(
+            "vars requires template".to_string(),
+        ));
+    }
+
     let vault = open_vault(ctx)?;
 
-    // Sanitize title (reject /, \, \0, .., strip .md suffix)
-    let clean_title = sanitize_title(&args.title)?;
+    let clean_title = sanitize_title(&title)?;
 
-    // Determine target directory
     let dir = args.dir.as_deref().unwrap_or_else(|| {
         vault
             .obsidian_config
@@ -782,16 +677,31 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
     };
     let full_path = vault.root.join(&relative);
 
+    // Validate path safety BEFORE any early returns (--if-not-exists, --dry-run)
+    if let Some(parent) = full_path.parent() {
+        validate_path_safety(&vault.root, &relative, parent)?;
+    }
+
+    // Handle --if-not-exists
+    if args.if_not_exists && full_path.exists() {
+        let data = serde_json::json!({
+            "action": "skipped",
+            "path": relative,
+            "title": clean_title,
+            "reason": "already_exists",
+        });
+        output::print_output(&data, 1, ctx.jsonl, &ctx.fields);
+        return Ok(());
+    }
+
     // Build content
     let mut content = String::new();
 
     if let Some(ref frontmatter_json) = args.frontmatter {
-        // ── Frontmatter path: dynamic YAML frontmatter from JSON ──
         let mut fm_map: std::collections::BTreeMap<String, serde_json::Value> =
             serde_json::from_str(frontmatter_json)
-                .map_err(|e| OvError::General(format!("Invalid frontmatter JSON: {e}")))?;
+                .map_err(|e| OvError::InvalidInput(format!("Invalid frontmatter JSON: {e}")))?;
 
-        // Merge --tags into frontmatter
         if let Some(ref tags_str) = args.tags {
             let tag_values: Vec<serde_json::Value> = tags_str
                 .split(',')
@@ -829,7 +739,6 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
             content.push_str("---\n");
         }
     } else if let Some(ref template_name) = args.template {
-        // ── Template path: read template file + variable substitution ──
         let template_dir = vault
             .obsidian_config
             .template_folder
@@ -840,19 +749,17 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
             .join(template_dir)
             .join(format!("{template_name}.md"));
         if !template_path.exists() {
-            return Err(OvError::General(format!(
+            return Err(OvError::NoteNotFound(format!(
                 "Template not found: {template_name}"
             )));
         }
         content = std::fs::read_to_string(&template_path)?;
 
-        // Replace template variables
         let now = chrono::Local::now();
         content = content.replace("{{date:YYYY-MM-DD}}", &now.format("%Y-%m-%d").to_string());
         content = content.replace("{{time:HH:mm}}", &now.format("%H:%M").to_string());
         content = content.replace("{{title}}", &clean_title);
 
-        // Apply --vars substitutions
         if let Some(ref vars_str) = args.vars {
             for pair in vars_str.split(',') {
                 if let Some((k, v)) = pair.split_once('=') {
@@ -863,14 +770,12 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
             }
         }
 
-        // Clean remaining {{...}} placeholders
         use std::sync::OnceLock;
         static PLACEHOLDER_RE: OnceLock<regex::Regex> = OnceLock::new();
         let placeholder_re =
             PLACEHOLDER_RE.get_or_init(|| regex::Regex::new(r"\{\{[^}]+\}\}").unwrap());
         content = placeholder_re.replace_all(&content, "").to_string();
     } else {
-        // ── Default path: simple note ──
         content.push_str(&format!("# {clean_title}\n\n"));
         if let Some(ref tags_str) = args.tags {
             let tags_formatted: Vec<String> = tags_str
@@ -888,56 +793,48 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
         }
     }
 
-    // Append sections (works with all paths)
     if let Some(ref sections_str) = args.sections {
         append_sections(&mut content, sections_str);
     }
 
-    // Append body content (works with all paths)
     if let Some(ref body) = args.content {
         append_body(&mut content, body);
     }
 
-    // Read from stdin if requested
     if args.stdin {
         let mut stdin_content = String::new();
         std::io::stdin().read_to_string(&mut stdin_content)?;
         content.push_str(&stdin_content);
     }
 
-    // Create parent directory if needed
+    // Dry-run: return what would be created
+    if args.dry_run {
+        let data = serde_json::json!({
+            "action": "would_create",
+            "path": relative,
+            "title": clean_title,
+            "content_preview": truncate_content(&content, 500),
+            "content_length": content.len(),
+            "dry_run": true,
+        });
+        output::print_output(&data, 1, ctx.jsonl, &ctx.fields);
+        return Ok(());
+    }
+
     if let Some(parent) = full_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
             OvError::General(format!("Cannot create directory {}: {e}", parent.display()))
         })?;
     }
 
-    // Path safety: logical check + physical symlink check (after mkdir)
-    if let Some(parent) = full_path.parent() {
-        validate_path_safety(&vault.root, &relative, parent)?;
-    }
-
-    // Atomic file creation with cleanup on failure
     atomic_write_new(&full_path, content.as_bytes(), &relative)?;
 
-    if !ctx.quiet {
-        eprintln!("Created note: {relative}");
-    }
-
-    match ctx.format {
-        OutputFormat::Human => {
-            println!("Created: {relative}");
-        }
-        _ => {
-            let data = serde_json::json!({
-                "action": "created",
-                "path": relative,
-                "title": clean_title,
-            });
-            let response = ApiResponse::success(&data, 1);
-            println!("{}", response.to_json_string());
-        }
-    }
+    let data = serde_json::json!({
+        "action": "created",
+        "path": relative,
+        "title": clean_title,
+    });
+    output::print_output(&data, 1, ctx.jsonl, &ctx.fields);
 
     Ok(())
 }
@@ -945,35 +842,31 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
 // ─── append ─────────────────────────────────────────────────────────────
 
 fn cmd_append(ctx: &Ctx, args: cli::append::AppendArgs) -> Result<(), OvError> {
+    let note_name = require_field(args.note, "note")?;
     let vault = open_vault(ctx)?;
-    let file_path = vault.resolve_note(&args.note)?;
+    let file_path = vault.resolve_note_with_mode(&note_name, args.fuzzy)?;
     let relative = vault.relative_path(&file_path);
 
-    // Read content to append
     let mut new_content = String::new();
     if args.stdin {
         std::io::stdin().read_to_string(&mut new_content)?;
     } else if let Some(ref text) = args.content {
         new_content = text.clone();
     } else {
-        return Err(OvError::General(
-            "Either --content or --stdin is required".to_string(),
+        return Err(OvError::MissingField(
+            "content (either --content or --stdin is required)".to_string(),
         ));
     }
 
-    // Prepend date subheading if requested
     if args.date {
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
         new_content = format!("### {today}\n{new_content}");
     }
 
-    // Read existing file
     let mut file_content = std::fs::read_to_string(&file_path)?;
 
-    // Find insert point
     if let Some(ref section) = args.section {
-        let insert_pos = find_section_insert_point(&file_content, section);
-        // Ensure proper spacing
+        let insert_pos = vault::find_section_insert_point(&file_content, section);
         let prefix = if insert_pos > 0 && !file_content[..insert_pos].ends_with("\n\n") {
             if file_content[..insert_pos].ends_with('\n') {
                 "\n".to_string()
@@ -991,7 +884,6 @@ fn cmd_append(ctx: &Ctx, args: cli::append::AppendArgs) -> Result<(), OvError> {
             };
         file_content.insert_str(insert_pos, &format!("{prefix}{new_content}\n{suffix}"));
     } else {
-        // Append to end
         if !file_content.ends_with('\n') {
             file_content.push('\n');
         }
@@ -1002,190 +894,484 @@ fn cmd_append(ctx: &Ctx, args: cli::append::AppendArgs) -> Result<(), OvError> {
         }
     }
 
+    // Dry-run: return what would be appended
+    if args.dry_run {
+        let data = serde_json::json!({
+            "action": "would_append",
+            "path": relative,
+            "section": args.section,
+            "content_length": new_content.len(),
+            "dry_run": true,
+        });
+        output::print_output(&data, 1, ctx.jsonl, &ctx.fields);
+        return Ok(());
+    }
+
     std::fs::write(&file_path, &file_content)?;
 
-    if !ctx.quiet {
-        eprintln!("Appended to: {relative}");
-    }
+    let data = serde_json::json!({
+        "action": "appended",
+        "path": relative,
+        "section": args.section,
+    });
+    output::print_output(&data, 1, ctx.jsonl, &ctx.fields);
 
-    match ctx.format {
-        OutputFormat::Human => {
-            println!("Appended to: {relative}");
+    Ok(())
+}
+
+// ─── schema ──────────────────────────────────────────────────────────────
+
+fn cmd_schema(ctx: &Ctx, args: cli::schema::SchemaArgs) -> Result<(), OvError> {
+    match args.action {
+        cli::schema::SchemaAction::Commands => {
+            let commands = schema_commands();
+            let count = commands.len();
+            output::print_output(&commands, count, ctx.jsonl, &ctx.fields);
         }
+        cli::schema::SchemaAction::Describe(desc_args) => {
+            let cmd_name = require_field(desc_args.command, "command")?;
+            let desc = schema_describe(&cmd_name)?;
+            output::print_output(&desc, 1, ctx.jsonl, &ctx.fields);
+        }
+        cli::schema::SchemaAction::Skill => {
+            // Raw markdown output — intended for direct context injection, not JSON wrapping
+            print!("{}", schema_skill());
+        }
+    }
+    Ok(())
+}
+
+fn schema_commands() -> Vec<serde_json::Value> {
+    vec![
+        serde_json::json!({
+            "name": "list",
+            "description": "List notes with filtering by dir/tag/date and sorting",
+            "has_side_effects": false,
+            "supports_dry_run": false,
+            "supports_json_input": true
+        }),
+        serde_json::json!({
+            "name": "read",
+            "description": "Read a note by name. Default: exact match",
+            "has_side_effects": false,
+            "supports_dry_run": false,
+            "supports_json_input": true
+        }),
+        serde_json::json!({
+            "name": "search",
+            "description": "Full-text search with tag:/in:/title:/date:/type: prefixes. Requires index",
+            "has_side_effects": false,
+            "supports_dry_run": false,
+            "supports_json_input": true
+        }),
+        serde_json::json!({
+            "name": "tags",
+            "description": "List all tags with occurrence counts",
+            "has_side_effects": false,
+            "supports_dry_run": false,
+            "supports_json_input": true
+        }),
+        serde_json::json!({
+            "name": "stats",
+            "description": "Show vault-wide statistics",
+            "has_side_effects": false,
+            "supports_dry_run": false,
+            "supports_json_input": false
+        }),
+        serde_json::json!({
+            "name": "links",
+            "description": "Show outgoing [[wiki-links]] from a note",
+            "has_side_effects": false,
+            "supports_dry_run": false,
+            "supports_json_input": true
+        }),
+        serde_json::json!({
+            "name": "backlinks",
+            "description": "Show incoming backlinks pointing to a note",
+            "has_side_effects": false,
+            "supports_dry_run": false,
+            "supports_json_input": true
+        }),
+        serde_json::json!({
+            "name": "graph",
+            "description": "Explore the link graph (JSON, DOT, or Mermaid)",
+            "has_side_effects": false,
+            "supports_dry_run": false,
+            "supports_json_input": true
+        }),
+        serde_json::json!({
+            "name": "daily",
+            "description": "Open or create today's daily note",
+            "has_side_effects": true,
+            "supports_dry_run": true,
+            "supports_json_input": true
+        }),
+        serde_json::json!({
+            "name": "create",
+            "description": "Create a new note (plain, frontmatter, or template-based)",
+            "has_side_effects": true,
+            "supports_dry_run": true,
+            "supports_json_input": true
+        }),
+        serde_json::json!({
+            "name": "append",
+            "description": "Append content to an existing note (section-aware)",
+            "has_side_effects": true,
+            "supports_dry_run": true,
+            "supports_json_input": true
+        }),
+        serde_json::json!({
+            "name": "index",
+            "description": "Manage Tantivy search index (build/status/clear)",
+            "has_side_effects": true,
+            "supports_dry_run": false,
+            "supports_json_input": false
+        }),
+        serde_json::json!({
+            "name": "config",
+            "description": "Get or set configuration values",
+            "has_side_effects": true,
+            "supports_dry_run": false,
+            "supports_json_input": true
+        }),
+        serde_json::json!({
+            "name": "schema",
+            "description": "Introspect CLI schema — list commands, describe inputs/outputs",
+            "has_side_effects": false,
+            "supports_dry_run": false,
+            "supports_json_input": false
+        }),
+    ]
+}
+
+fn schema_describe(cmd_name: &str) -> Result<serde_json::Value, OvError> {
+    let desc = match cmd_name {
+        "list" => serde_json::json!({
+            "name": "list",
+            "description": "List notes with filtering by dir/tag/date and sorting",
+            "has_side_effects": false,
+            "input": {
+                "fields": [
+                    {"name": "dir", "type": "string", "required": false, "description": "Filter by directory name"},
+                    {"name": "tag", "type": "string", "required": false, "description": "Filter by tag (e.g., '#imweb')"},
+                    {"name": "date", "type": "string", "required": false, "description": "Filter by modification date: YYYY-MM-DD or 'today'"},
+                    {"name": "sort", "type": "string", "required": false, "default": "modified", "enum": ["title", "modified", "size", "words"], "description": "Sort field"},
+                    {"name": "reverse", "type": "boolean", "required": false, "default": false, "description": "Reverse sort order"},
+                    {"name": "limit", "type": "integer", "required": false, "default": 50, "description": "Max results to return"},
+                    {"name": "offset", "type": "integer", "required": false, "default": 0, "description": "Skip first N results"}
+                ]
+            },
+            "output": {
+                "type": "array",
+                "fields": ["title", "path", "dir", "tags", "modified", "word_count", "link_count", "evicted"],
+                "meta": ["total", "offset", "limit", "has_more"]
+            },
+            "examples": [
+                {"description": "Recent notes in Zettelkasten", "json": "{\"dir\":\"Zettelkasten\",\"limit\":10}"},
+                {"description": "Notes tagged #k8s", "json": "{\"tag\":\"#k8s\"}"},
+                {"description": "Notes modified today", "json": "{\"date\":\"today\"}"}
+            ]
+        }),
+        "read" => serde_json::json!({
+            "name": "read",
+            "description": "Read a note by name. Exact match by default, use fuzzy flag for fuzzy matching",
+            "has_side_effects": false,
+            "input": {
+                "fields": [
+                    {"name": "note", "type": "string", "required": true, "description": "Note name or path"},
+                    {"name": "fuzzy", "type": "boolean", "required": false, "default": false, "description": "Enable fuzzy matching"},
+                    {"name": "no_body", "type": "boolean", "required": false, "default": false, "description": "Exclude body content from output"},
+                    {"name": "raw", "type": "boolean", "required": false, "default": false, "description": "Output raw body text only (no JSON wrapping)"}
+                ]
+            },
+            "output": {
+                "type": "object",
+                "fields": ["title", "path", "dir", "frontmatter", "tags", "links", "headings", "word_count", "file_meta", "body"]
+            },
+            "examples": [
+                {"description": "Read a note exactly", "json": "{\"note\":\"ElasticSearch\"}"},
+                {"description": "Read with fuzzy matching", "json": "{\"note\":\"elastic\",\"fuzzy\":true}"},
+                {"description": "Metadata only", "json": "{\"note\":\"ElasticSearch\",\"no_body\":true}"}
+            ]
+        }),
+        "search" => serde_json::json!({
+            "name": "search",
+            "description": "Full-text search with prefix filters. Requires: ov index build",
+            "has_side_effects": false,
+            "input": {
+                "fields": [
+                    {"name": "query", "type": "string", "required": true, "description": "Search query. Supports prefixes: tag:#X, in:Dir, title:X, date:YYYY, type:X"},
+                    {"name": "snippet", "type": "boolean", "required": false, "default": false, "description": "Show text snippet around matches"},
+                    {"name": "limit", "type": "integer", "required": false, "default": 20, "description": "Max results"},
+                    {"name": "offset", "type": "integer", "required": false, "default": 0, "description": "Skip first N results"}
+                ]
+            },
+            "output": {
+                "type": "array",
+                "fields": ["title", "path", "tags", "score", "snippet"],
+                "meta": ["offset", "limit", "has_more"]
+            },
+            "examples": [
+                {"description": "Keyword search", "json": "{\"query\":\"kubernetes\"}"},
+                {"description": "Tag + directory filter", "json": "{\"query\":\"tag:#k8s in:Zettelkasten\",\"snippet\":true}"},
+                {"description": "Type filter", "json": "{\"query\":\"type:troubleshooting\",\"limit\":5}"}
+            ]
+        }),
+        "tags" => serde_json::json!({
+            "name": "tags",
+            "description": "List all tags with occurrence counts",
+            "has_side_effects": false,
+            "input": {
+                "fields": [
+                    {"name": "sort", "type": "string", "required": false, "default": "count", "enum": ["count", "name"], "description": "Sort field"},
+                    {"name": "limit", "type": "integer", "required": false, "description": "Max tags to return"},
+                    {"name": "min_count", "type": "integer", "required": false, "description": "Min occurrences filter"}
+                ]
+            },
+            "output": {
+                "type": "array",
+                "fields": ["tag", "count", "notes"]
+            },
+            "examples": [
+                {"description": "Top 10 tags", "json": "{\"limit\":10}"},
+                {"description": "Tags with 5+ uses", "json": "{\"min_count\":5}"}
+            ]
+        }),
+        "stats" => serde_json::json!({
+            "name": "stats",
+            "description": "Show vault-wide statistics",
+            "has_side_effects": false,
+            "input": {"fields": []},
+            "output": {
+                "type": "object",
+                "fields": ["total_notes", "total_words", "total_links", "unique_tags", "directories", "total_size_bytes", "total_size_mb", "avg_words_per_note", "avg_links_per_note", "top_tags", "directory_list"]
+            },
+            "examples": [
+                {"description": "Get vault stats", "cli": "ov stats"}
+            ]
+        }),
+        "links" => serde_json::json!({
+            "name": "links",
+            "description": "Show outgoing [[wiki-links]] from a note",
+            "has_side_effects": false,
+            "input": {
+                "fields": [
+                    {"name": "note", "type": "string", "required": true, "description": "Note name or path"},
+                    {"name": "fuzzy", "type": "boolean", "required": false, "default": false, "description": "Enable fuzzy matching"}
+                ]
+            },
+            "output": {
+                "type": "array",
+                "fields": ["target", "alias", "is_embed", "line"]
+            },
+            "examples": [
+                {"description": "Get outgoing links", "json": "{\"note\":\"Redis\"}"}
+            ]
+        }),
+        "backlinks" => serde_json::json!({
+            "name": "backlinks",
+            "description": "Show incoming backlinks pointing to a note",
+            "has_side_effects": false,
+            "input": {
+                "fields": [
+                    {"name": "note", "type": "string", "required": true, "description": "Note name or path"},
+                    {"name": "context", "type": "boolean", "required": false, "default": false, "description": "Show surrounding text context"},
+                    {"name": "fuzzy", "type": "boolean", "required": false, "default": false, "description": "Enable fuzzy matching"}
+                ]
+            },
+            "output": {
+                "type": "array",
+                "fields": ["source", "source_path", "context", "line"]
+            },
+            "examples": [
+                {"description": "Find backlinks with context", "json": "{\"note\":\"Redis\",\"context\":true}"}
+            ]
+        }),
+        "graph" => serde_json::json!({
+            "name": "graph",
+            "description": "Explore the link graph",
+            "has_side_effects": false,
+            "input": {
+                "fields": [
+                    {"name": "center", "type": "string", "required": false, "description": "Center note for subgraph (omit for full graph)"},
+                    {"name": "depth", "type": "integer", "required": false, "default": 2, "description": "BFS traversal depth"},
+                    {"name": "graph_format", "type": "string", "required": false, "default": "json", "enum": ["json", "dot", "mermaid"], "description": "Output format"},
+                    {"name": "fuzzy", "type": "boolean", "required": false, "default": false, "description": "Enable fuzzy matching for center note"}
+                ]
+            },
+            "output": {
+                "type": "object",
+                "fields": ["nodes", "edges", "orphans"]
+            },
+            "examples": [
+                {"description": "Subgraph around Redis", "json": "{\"center\":\"Redis\",\"depth\":2}"},
+                {"description": "Full graph as DOT", "json": "{\"graph_format\":\"dot\"}"}
+            ]
+        }),
+        "daily" => serde_json::json!({
+            "name": "daily",
+            "description": "Open or create today's daily note",
+            "has_side_effects": true,
+            "supports_dry_run": true,
+            "input": {
+                "fields": [
+                    {"name": "date", "type": "string", "required": false, "description": "YYYY-MM-DD (defaults to today)"},
+                    {"name": "dry_run", "type": "boolean", "required": false, "default": false, "description": "Preview without creating"}
+                ]
+            },
+            "output": {
+                "type": "object",
+                "fields": ["action", "path", "date"]
+            },
+            "examples": [
+                {"description": "Open today's note", "json": "{}"},
+                {"description": "Preview creation", "json": "{\"dry_run\":true}"}
+            ]
+        }),
+        "create" => serde_json::json!({
+            "name": "create",
+            "description": "Create a new note",
+            "has_side_effects": true,
+            "supports_dry_run": true,
+            "input": {
+                "fields": [
+                    {"name": "title", "type": "string", "required": true, "description": "Note title (becomes filename)"},
+                    {"name": "dir", "type": "string", "required": false, "description": "Target directory"},
+                    {"name": "tags", "type": "string", "required": false, "description": "Comma-separated tags"},
+                    {"name": "template", "type": "string", "required": false, "description": "Template note name"},
+                    {"name": "frontmatter", "type": "string", "required": false, "description": "YAML frontmatter as JSON string"},
+                    {"name": "sections", "type": "string", "required": false, "description": "Comma-separated section headings"},
+                    {"name": "content", "type": "string", "required": false, "description": "Initial body text"},
+                    {"name": "vars", "type": "string", "required": false, "description": "Template variables (key=val,key=val)"},
+                    {"name": "stdin", "type": "boolean", "required": false, "default": false, "description": "Read body from stdin"},
+                    {"name": "dry_run", "type": "boolean", "required": false, "default": false, "description": "Preview without creating"},
+                    {"name": "if_not_exists", "type": "boolean", "required": false, "default": false, "description": "Skip silently if note exists (idempotent)"}
+                ],
+                "constraints": ["template and frontmatter are mutually exclusive", "vars requires template"]
+            },
+            "output": {
+                "type": "object",
+                "fields": ["action", "path", "title"]
+            },
+            "examples": [
+                {"description": "Simple note", "json": "{\"title\":\"My Note\",\"tags\":\"idea,k8s\"}"},
+                {"description": "With frontmatter", "json": "{\"title\":\"Redis 장애\",\"frontmatter\":\"{\\\"type\\\":\\\"troubleshooting\\\"}\",\"tags\":\"troubleshooting\",\"sections\":\"원인,해결\"}"},
+                {"description": "Idempotent create", "json": "{\"title\":\"My Note\",\"if_not_exists\":true}"},
+                {"description": "Dry run", "json": "{\"title\":\"Test\",\"dry_run\":true}"}
+            ]
+        }),
+        "append" => serde_json::json!({
+            "name": "append",
+            "description": "Append content to an existing note (section-aware)",
+            "has_side_effects": true,
+            "supports_dry_run": true,
+            "input": {
+                "fields": [
+                    {"name": "note", "type": "string", "required": true, "description": "Note name (exact match default)"},
+                    {"name": "content", "type": "string", "required": true, "description": "Content to append (or use stdin)"},
+                    {"name": "section", "type": "string", "required": false, "description": "Insert under this ## section heading"},
+                    {"name": "date", "type": "boolean", "required": false, "default": false, "description": "Prepend ### YYYY-MM-DD heading"},
+                    {"name": "fuzzy", "type": "boolean", "required": false, "default": false, "description": "Enable fuzzy matching"},
+                    {"name": "stdin", "type": "boolean", "required": false, "default": false, "description": "Read content from stdin"},
+                    {"name": "dry_run", "type": "boolean", "required": false, "default": false, "description": "Preview without writing"}
+                ]
+            },
+            "output": {
+                "type": "object",
+                "fields": ["action", "path", "section"]
+            },
+            "examples": [
+                {"description": "Append to end", "json": "{\"note\":\"Meeting\",\"content\":\"New item\"}"},
+                {"description": "Insert under section", "json": "{\"note\":\"Meeting\",\"section\":\"Timeline\",\"content\":\"14:30 event\",\"date\":true}"},
+                {"description": "Dry run", "json": "{\"note\":\"Meeting\",\"content\":\"test\",\"dry_run\":true}"}
+            ]
+        }),
+        "config" => serde_json::json!({
+            "name": "config",
+            "description": "Get or set configuration values",
+            "has_side_effects": true,
+            "input": {
+                "fields": [
+                    {"name": "key", "type": "string", "required": false, "enum": ["vault_path"], "description": "Config key"},
+                    {"name": "value", "type": "string", "required": false, "description": "Value to set"}
+                ]
+            },
+            "output": {
+                "type": "object",
+                "fields": ["key", "value", "action"]
+            },
+            "examples": [
+                {"description": "Show all config", "json": "{}"},
+                {"description": "Get vault path", "json": "{\"key\":\"vault_path\"}"},
+                {"description": "Set vault path", "json": "{\"key\":\"vault_path\",\"value\":\"/path/to/vault\"}"}
+            ]
+        }),
+        "index" => serde_json::json!({
+            "name": "index",
+            "description": "Manage Tantivy search index",
+            "has_side_effects": true,
+            "input": {
+                "subcommands": ["build", "status", "clear"]
+            },
+            "output": {
+                "type": "object",
+                "fields": ["action", "indexed", "skipped", "total", "elapsed_ms"]
+            },
+            "examples": [
+                {"description": "Build index", "cli": "ov index build"},
+                {"description": "Check status", "cli": "ov index status"},
+                {"description": "Clear index", "cli": "ov index clear"}
+            ]
+        }),
         _ => {
-            let data = serde_json::json!({
-                "action": "appended",
-                "path": relative,
-                "section": args.section,
-            });
-            let response = ApiResponse::success(&data, 1);
-            println!("{}", response.to_json_string());
+            return Err(OvError::InvalidInput(format!(
+                "Unknown command: {cmd_name}. Use `ov schema commands` to list available commands"
+            )));
         }
-    }
+    };
 
-    Ok(())
+    Ok(desc)
 }
 
-/// Find the insert point within a section (delegates to vault module).
-fn find_section_insert_point(content: &str, section: &str) -> usize {
-    vault::find_section_insert_point(content, section)
+fn schema_skill() -> String {
+    r#"# ov — Obsidian Vault CLI (Agent Skill File)
+
+## Overview
+`ov` is an agent-first CLI for Obsidian vaults. All output is JSON. All input supports `--json` payloads.
+
+## Invariants
+- All responses are JSON: `{"ok": true, "count": N, "data": ..., "meta": {...}}`
+- Errors are JSON: `{"ok": false, "error": {"code": "...", "message": "...", "hint": "..."}}`
+- Note matching is EXACT by default. Use `--fuzzy` flag to enable fuzzy matching.
+- Write commands (create, append, daily) support `--dry-run` for preview.
+- `create` supports `--if-not-exists` for idempotent operations.
+- Exit codes: 0=success, 1=general, 2=vault_not_found, 3=index_not_built, 4=query_parse, 5=already_exists, 6=invalid_input
+
+## Input Modes
+1. Named flags: `ov create --title "Note" --tags "a,b"`
+2. JSON payload: `ov create --json '{"title":"Note","tags":"a,b"}'`
+
+## Context Window Management
+- Use `--fields title,path,tags` to select only needed fields
+- Use `--jsonl` for NDJSON streaming (one object per line, no wrapper)
+- Use `--limit` and `--offset` for pagination. Check `meta.has_more` to continue.
+
+## Safety
+- Always use `--dry-run` before write operations to preview
+- Always use `--if-not-exists` with `create` for retry safety
+- Note resolution is exact match only (no fuzzy) unless `--fuzzy` is set
+- Path traversal attacks are blocked (vault escape detection)
+- Control characters in input are stripped automatically
+
+## Prerequisites
+- Set OV_VAULT env var or use --vault flag
+- Run `ov index build` before using `search` command
+- Index is incremental — safe to rebuild frequently
+
+## Discovery
+- `ov schema commands` — list all commands with side-effect flags
+- `ov schema describe --command <name>` — input/output schema + examples
+- `ov schema skill` — this document
+"#
+    .to_string()
 }
-
-// ─── guide ───────────────────────────────────────────────────────────────
-
-fn cmd_guide() -> Result<(), OvError> {
-    print!("{}", GUIDE_TEXT);
-    Ok(())
-}
-
-const GUIDE_TEXT: &str = concat!(
-    "\x1b[1m", "ov — Knowledge Management Guide", "\x1b[0m", "\n",
-    "\n",
-    // ── PHILOSOPHY ──
-    "\x1b[1m", "PHILOSOPHY", "\x1b[0m", "\n",
-    "\n",
-    "  ov treats your Obsidian vault as a Zettelkasten: a network of atomic,\n",
-    "  interlinked notes optimized for *retrieval*, not storage.\n",
-    "\n",
-    "  Three principles:\n",
-    "\n",
-    "  1. Write to retrieve     — Title and tags should answer:\n",
-    "                              \"Will I find this 6 months from now?\"\n",
-    "  2. Links over folders    — Folders are access paths. Links are meaning.\n",
-    "                              A note's value comes from its connections.\n",
-    "  3. One idea per note     — Atomic notes are reusable. A 5-page doc\n",
-    "                              is a silo. Break it into linked pieces.\n",
-    "\n",
-    // ── VAULT STRUCTURE ──
-    "\x1b[1m", "VAULT STRUCTURE", "\x1b[0m", "\n",
-    "\n",
-    "  Directories are not categories — they are *note lifecycles*:\n",
-    "\n",
-    "  Zettelkasten/   Your knowledge base. Default for all notes.\n",
-    "                  Troubleshooting, study notes, ideas, decisions.\n",
-    "\n",
-    "  Clippings/      External sources — articles, talks, papers, videos.\n",
-    "                  Always add a \"내 생각\" section to transform consumption\n",
-    "                  into creation, then [[link]] to your own notes.\n",
-    "\n",
-    "  People/         Person profiles with interaction history.\n",
-    "                  Use --template to scaffold, --append to accumulate.\n",
-    "\n",
-    "  Templates/      Blueprints for structured notes. Never edit directly.\n",
-    "\n",
-    "  \x1b[2m", "Rule: If unsure where a note goes, it goes in Zettelkasten/.", "\x1b[0m", "\n",
-    "  \x1b[2m", "Use tags and [[links]] for categorization, not folders.", "\x1b[0m", "\n",
-    "\n",
-    // ── NOTE TYPES ──
-    "\x1b[1m", "NOTE TYPES & CREATION PATTERNS", "\x1b[0m", "\n",
-    "\n",
-    "  \x1b[1m", "Troubleshooting", "\x1b[0m", " — Incident → Root cause → Fix → Lesson\n",
-    "    ov create \"Redis 커넥션 풀 고갈 장애\" \\\n",
-    "      --frontmatter '{\"type\":\"troubleshooting\",\"service\":\"redis\",\"severity\":\"P1\"}' \\\n",
-    "      --tags \"troubleshooting,redis\" \\\n",
-    "      --sections \"문제 상황,원인 분석,해결 방법,결과 및 교훈\"\n",
-    "\n",
-    "    Why it works: frontmatter enables `ov search \"type:troubleshooting\"`,\n",
-    "    sections enforce complete analysis, tags enable cross-service discovery.\n",
-    "    → Link to: [[Redis]], [[similar past incident]], [[runbook]]\n",
-    "\n",
-    "  \x1b[1m", "Study Note", "\x1b[0m", " — Concept → Key points → Hands-on → References\n",
-    "    ov create \"Kafka Consumer Group 리밸런싱\" \\\n",
-    "      --frontmatter '{\"type\":\"study\",\"topic\":\"kafka\"}' \\\n",
-    "      --tags \"kafka,study\" \\\n",
-    "      --sections \"개념,핵심 포인트,실습/예제,참고 자료\"\n",
-    "\n",
-    "    Why it works: atomic topic per note makes it linkable from any context.\n",
-    "    → Link to: [[Kafka]], [[Consumer Lag 모니터링]], [[관련 장애]]\n",
-    "\n",
-    "  \x1b[1m", "Person Profile", "\x1b[0m", " — Identity + Context + Interaction log\n",
-    "    ov create \"김영수\" --dir People \\\n",
-    "      --template \"_사람정보_템플릿\" --sections \"면담기록\"\n",
-    "\n",
-    "    Accumulate over time:\n",
-    "    ov append \"김영수\" --section \"면담기록\" --date \\\n",
-    "      --content \"SRE 팀 이동 논의. K8s 경험 풍부.\"\n",
-    "\n",
-    "    Why it works: People/ becomes a living directory. Date-stamped appends\n",
-    "    build a timeline. Link from meeting notes: [[김영수]].\n",
-    "\n",
-    "  \x1b[1m", "Meeting Notes", "\x1b[0m", " — Agenda → Discussion → Actions\n",
-    "    ov create \"2024-03-03 인프라팀 주간회의\" \\\n",
-    "      --frontmatter '{\"type\":\"meeting\",\"team\":\"infra\"}' \\\n",
-    "      --tags \"meeting,imweb\" \\\n",
-    "      --sections \"Agenda,Discussion,Action Items\"\n",
-    "\n",
-    "    Why it works: Date prefix enables chronological listing. Link action\n",
-    "    items to [[owners]] and [[projects]].\n",
-    "\n",
-    "  \x1b[1m", "Clipping", "\x1b[0m", " — Source → Summary → Insight → My thoughts\n",
-    "    ov create \"eBPF로 K8s 네트워크 관찰\" --dir Clippings \\\n",
-    "      --frontmatter '{\"type\":\"clipping\",\"source\":\"https://...\"}' \\\n",
-    "      --tags \"clippings,k8s\" \\\n",
-    "      --sections \"요약,핵심 인사이트,내 생각\"\n",
-    "\n",
-    "    Why it works: \"내 생각\" transforms passive reading into active knowledge.\n",
-    "    Without it, clippings are just bookmarks. Link to your Zettelkasten notes.\n",
-    "\n",
-    // ── LINKING STRATEGY ──
-    "\x1b[1m", "LINKING STRATEGY — The Knowledge Graph", "\x1b[0m", "\n",
-    "\n",
-    "  [[Wiki-links]] are the backbone of your vault. Every note should\n",
-    "  reference at least 2 related notes:\n",
-    "\n",
-    "    \"This extends [[X]]\"        — builds on existing knowledge\n",
-    "    \"This contradicts [[Y]]\"    — captures tension and nuance\n",
-    "    \"See also [[Z]]\"            — creates discovery paths\n",
-    "\n",
-    "  Inspect your graph:\n",
-    "    ov links \"Redis\"               # Where does this note point?\n",
-    "    ov backlinks \"Redis\"           # What points to this note?\n",
-    "    ov graph --center \"Redis\" \\    # Visualize the neighborhood\n",
-    "      --depth 2 --format json\n",
-    "\n",
-    "  \x1b[2m", "Orphan notes (0 links) are lost knowledge. Periodically review:", "\x1b[0m", "\n",
-    "  \x1b[2m", "  ov graph --format json   →  check the \"orphans\" field", "\x1b[0m", "\n",
-    "\n",
-    // ── TAG STRATEGY ──
-    "\x1b[1m", "TAG STRATEGY", "\x1b[0m", "\n",
-    "\n",
-    "  Tags = categorical retrieval. Links = semantic relationships.\n",
-    "  They serve different purposes — use both.\n",
-    "\n",
-    "  Good tags:  #troubleshooting  #kafka  #meeting  #study  #idea\n",
-    "              (actionable, specific, reusable across many notes)\n",
-    "\n",
-    "  Bad tags:   #important  #todo  #misc  #temp\n",
-    "              (too vague — you'll never search for \"important\")\n",
-    "\n",
-    "  Before creating a new tag, check existing ones:\n",
-    "    ov tags --sort count --format json\n",
-    "\n",
-    "  \x1b[2m", "A tag used only once is noise. Reuse existing tags.", "\x1b[0m", "\n",
-    "\n",
-    // ── RETRIEVAL PATTERNS ──
-    "\x1b[1m", "RETRIEVAL PATTERNS", "\x1b[0m", "\n",
-    "\n",
-    "  Design every note so future-you can find it via multiple paths:\n",
-    "\n",
-    "  1. Keyword search    ov search \"connection pool timeout\"\n",
-    "  2. Tag browsing      ov list --tag \"#troubleshooting\" --limit 20\n",
-    "  3. Graph walking     ov backlinks \"Redis\"  → discover related notes\n",
-    "  4. Type filtering    ov search \"type:troubleshooting\"\n",
-    "  5. Directory scope   ov search \"in:People 김\"  → find person notes\n",
-    "  6. Date filtering    ov list --date this-week  → recent activity\n",
-    "\n",
-    "  \x1b[2m", "The litmus test: \"Can I find this note 6 months from now", "\x1b[0m", "\n",
-    "  \x1b[2m", "without remembering the exact title?\"", "\x1b[0m", "\n",
-    "\n",
-    // ── GROWTH WORKFLOW ──
-    "\x1b[1m", "DAILY WORKFLOW", "\x1b[0m", "\n",
-    "\n",
-    "  Capture  →  ov create (quick note with tags)\n",
-    "  Process  →  Add [[links]] to related notes, fill sections\n",
-    "  Connect  →  ov backlinks to find notes that should link here\n",
-    "  Review   →  ov graph --center \"topic\" to see the neighborhood\n",
-    "  Grow     →  ov append to accumulate on existing notes\n",
-    "\n",
-    "  \x1b[2m", "A vault with 100 well-linked notes beats 1000 orphan notes.", "\x1b[0m", "\n",
-);

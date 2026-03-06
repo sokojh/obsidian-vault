@@ -1,56 +1,42 @@
 pub mod append;
 pub mod config;
 pub mod create;
+pub mod serde_helpers;
 pub mod daily;
 pub mod graph;
-pub mod guide;
 pub mod index;
 pub mod links;
 pub mod list;
 pub mod read;
+pub mod schema;
 pub mod search;
 pub mod stats;
 pub mod tags;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(
     name = "ov",
-    about = "Obsidian Vault CLI — high-performance vault interface for terminal and AI",
-    version,
-    after_long_help = "\x1b[1mExamples:\x1b[0m
-  ov list --format json                          # List recent notes as JSON
-  ov search \"kubernetes\" --snippet               # Full-text search with snippets
-  ov read \"ElasticSearch\" --raw                   # Read note body (fuzzy match)
-  ov create \"My Note\" --tags \"idea,k8s\"           # Create a simple note
-  ov create \"장애보고\" --frontmatter '{\"type\":\"troubleshooting\"}' --sections \"원인,해결\"
-  ov append \"My Note\" --section \"Timeline\" --content \"14:30 이벤트\"
-  ov tags --sort count --format json             # List all tags
-  ov index build                                 # Build/update search index
-
-\x1b[1mEnvironment:\x1b[0m
-  OV_VAULT    Path to vault (alternative to --vault)
-
-\x1b[1mNew to ov?\x1b[0m
-  Run 'ov guide' for vault philosophy, note types, and best practices."
+    about = "Obsidian Vault CLI — agent-first vault interface. All output is JSON.",
+    version
 )]
 pub struct Cli {
     /// Path to Obsidian vault root directory
     #[arg(long, env = "OV_VAULT", global = true)]
     pub vault: Option<String>,
 
-    /// Output format: human (table), json (wrapped), jsonl (streaming)
-    #[arg(long, short, default_value = "human", global = true)]
-    pub format: OutputFormat,
+    /// Output as NDJSON (one JSON object per line) instead of wrapped response
+    #[arg(long, global = true)]
+    pub jsonl: bool,
 
     /// Select specific fields in output (comma-separated, e.g., "title,tags,path")
     #[arg(long, global = true)]
     pub fields: Option<String>,
 
-    /// Suppress informational stderr messages
-    #[arg(long, short, global = true)]
-    pub quiet: bool,
+    /// JSON payload input (alternative to individual flags)
+    #[arg(long, global = true)]
+    pub json: Option<String>,
 
     #[command(subcommand)]
     pub command: Command,
@@ -58,10 +44,10 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Full-text search (requires: ov index build). Supports tag:/in:/title:/date: prefixes
+    /// Full-text search. Supports tag:/in:/title:/date:/type: prefixes. Requires: ov index build
     Search(search::SearchArgs),
 
-    /// Read a note by name with fuzzy matching
+    /// Read a note by name. Default: exact match. Use --fuzzy for fuzzy matching
     Read(read::ReadArgs),
 
     /// List notes with filtering by dir/tag/date and sorting
@@ -76,7 +62,7 @@ pub enum Command {
     /// Show incoming backlinks pointing to a note
     Backlinks(links::BacklinksArgs),
 
-    /// Explore the link graph (JSON, DOT, or Mermaid output)
+    /// Explore the link graph (JSON output, or DOT/Mermaid format)
     Graph(graph::GraphArgs),
 
     /// Show vault-wide statistics (note count, word count, tags, etc.)
@@ -85,7 +71,7 @@ pub enum Command {
     /// Open or create today's daily note
     Daily(daily::DailyArgs),
 
-    /// Create a new note (plain, frontmatter, or template-based)
+    /// Create a new note (plain, frontmatter, or template-based). Supports --dry-run
     Create(create::CreateArgs),
 
     /// Manage the Tantivy search index (build, status, clear)
@@ -94,16 +80,9 @@ pub enum Command {
     /// Get or set configuration values
     Config(config::ConfigArgs),
 
-    /// Append content to an existing note (end, section, or dated entry)
+    /// Append content to an existing note (end, section, or dated entry). Supports --dry-run
     Append(append::AppendArgs),
 
-    /// Knowledge management guide — vault philosophy and best practices
-    Guide(guide::GuideArgs),
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum OutputFormat {
-    Human,
-    Json,
-    Jsonl,
+    /// Introspect CLI schema — list commands, describe inputs/outputs, export skill file
+    Schema(schema::SchemaArgs),
 }

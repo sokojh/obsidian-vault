@@ -1,14 +1,13 @@
 use clap::Args;
+use serde::Deserialize;
 
-#[derive(Args)]
-#[command(after_long_help = "\x1b[1mExamples:\x1b[0m
-  ov config                    # Show all config
-  ov config vault.path         # Get a specific key
-  ov config vault.path /path   # Set a value")]
+#[derive(Args, Deserialize, Default)]
 pub struct ConfigArgs {
     /// Config key to get or set (omit to show all)
+    #[arg(long)]
     pub key: Option<String>,
 
     /// Value to set for the given key
+    #[arg(long)]
     pub value: Option<String>,
 }

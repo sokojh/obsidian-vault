@@ -2,7 +2,7 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum OvError {
-    #[error("General error: {0}")]
+    #[error("{0}")]
     General(String),
 
     #[error("Vault not found at: {0}")]
@@ -16,6 +16,15 @@ pub enum OvError {
 
     #[error("Note not found: {0}")]
     NoteNotFound(String),
+
+    #[error("Note already exists: {0}")]
+    AlreadyExists(String),
+
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+
+    #[error("Missing required field: {0}")]
+    MissingField(String),
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
@@ -42,7 +51,43 @@ impl OvError {
             OvError::VaultNotFound(_) => 2,
             OvError::IndexNotBuilt => 3,
             OvError::QueryParse(_) => 4,
+            OvError::AlreadyExists(_) => 5,
+            OvError::InvalidInput(_) | OvError::MissingField(_) => 6,
             _ => 1,
+        }
+    }
+
+    pub fn error_code(&self) -> &'static str {
+        match self {
+            OvError::General(_) => "GENERAL_ERROR",
+            OvError::VaultNotFound(_) => "VAULT_NOT_FOUND",
+            OvError::IndexNotBuilt => "INDEX_NOT_BUILT",
+            OvError::QueryParse(_) => "QUERY_PARSE_ERROR",
+            OvError::NoteNotFound(_) => "NOTE_NOT_FOUND",
+            OvError::AlreadyExists(_) => "ALREADY_EXISTS",
+            OvError::InvalidInput(_) => "INVALID_INPUT",
+            OvError::MissingField(_) => "MISSING_FIELD",
+            OvError::Io(_) => "IO_ERROR",
+            OvError::Yaml(_) => "YAML_PARSE_ERROR",
+            OvError::Json(_) => "JSON_PARSE_ERROR",
+            OvError::Toml(_) => "TOML_PARSE_ERROR",
+            OvError::TomlSerialize(_) => "TOML_SERIALIZE_ERROR",
+            OvError::WalkDir(_) => "SCAN_ERROR",
+        }
+    }
+
+    pub fn hint(&self) -> Option<&'static str> {
+        match self {
+            OvError::VaultNotFound(_) => Some("Set OV_VAULT env or use --vault flag"),
+            OvError::IndexNotBuilt => Some("Run `ov index build` to create the search index"),
+            OvError::NoteNotFound(_) => {
+                Some("Use `ov list` to find available notes, or try --fuzzy flag")
+            }
+            OvError::AlreadyExists(_) => Some("Use --if-not-exists to skip silently"),
+            OvError::MissingField(_) => {
+                Some("Use `ov schema describe <command>` to see required fields")
+            }
+            _ => None,
         }
     }
 }
