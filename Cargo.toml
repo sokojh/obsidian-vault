@@ -49,6 +49,9 @@ fuzzy-matcher = "0.3"
 # Search
 tantivy = "0.22"
 
+# HTTP (update check)
+ureq = { version = "2", features = ["json"] }
+
 
 [dev-dependencies]
 tempfile = "3"
