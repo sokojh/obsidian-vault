@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::time::Instant;
@@ -100,6 +100,17 @@ pub fn build_index(vault: &Vault, force: bool) -> OvResult<BuildResult> {
     let mut new_hashes: HashMap<String, FileHashEntry> = HashMap::new();
     let mut indexed = 0usize;
     let mut skipped = 0usize;
+
+    // Collect current file paths for stale detection
+    let current_paths: HashSet<String> = files.iter().map(|f| vault.relative_path(f)).collect();
+
+    // Delete stale entries: files that were in the old index but no longer exist
+    for old_path in old_hashes.keys() {
+        if !current_paths.contains(old_path) {
+            let path_term = tantivy::Term::from_field_text(fields.path, old_path);
+            writer.delete_term(path_term);
+        }
+    }
 
     for file in files {
         let relative = vault.relative_path(file);

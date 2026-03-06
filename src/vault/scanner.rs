@@ -21,6 +21,12 @@ const EXCLUDED_EXTENSIONS: &[&str] = &["excalidraw.md"];
 pub fn scan_vault(root: &Path, extra_excludes: &[String]) -> Vec<PathBuf> {
     let mut files = Vec::new();
 
+    // Canonicalize vault root for boundary checking against symlinks
+    let canonical_root = match root.canonicalize() {
+        Ok(r) => r,
+        Err(_) => root.to_path_buf(),
+    };
+
     for entry in WalkDir::new(root)
         .follow_links(true)
         .into_iter()
@@ -32,6 +38,14 @@ pub fn scan_vault(root: &Path, extra_excludes: &[String]) -> Vec<PathBuf> {
         };
 
         let path = entry.path();
+
+        // Boundary check: canonicalize and ensure the file is within vault root.
+        // This prevents symlinks from escaping the vault boundary.
+        if let Ok(canonical) = path.canonicalize() {
+            if !canonical.starts_with(&canonical_root) {
+                continue;
+            }
+        }
 
         // Only .md files
         if path.extension().is_none_or(|ext| ext != "md") {
