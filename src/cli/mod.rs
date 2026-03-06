@@ -1,7 +1,6 @@
 pub mod append;
 pub mod config;
 pub mod create;
-pub mod serde_helpers;
 pub mod daily;
 pub mod graph;
 pub mod index;
@@ -10,6 +9,7 @@ pub mod list;
 pub mod read;
 pub mod schema;
 pub mod search;
+pub mod serde_helpers;
 pub mod stats;
 pub mod tags;
 

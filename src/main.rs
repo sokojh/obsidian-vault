@@ -51,9 +51,8 @@ impl From<&Cli> for Ctx {
 /// Parse JSON input string into the specified Args type
 fn parse_json_input<T: DeserializeOwned>(json_str: &str) -> Result<T, OvError> {
     let sanitized = sanitize_input(json_str);
-    serde_json::from_str(&sanitized).map_err(|e| {
-        OvError::InvalidInput(format!("Invalid JSON payload: {e}"))
-    })
+    serde_json::from_str(&sanitized)
+        .map_err(|e| OvError::InvalidInput(format!("Invalid JSON payload: {e}")))
 }
 
 /// Strip control characters (U+0000..U+001F except \n, \r, \t) from input
@@ -124,10 +123,7 @@ fn run(cli: Cli) -> Result<(), OvError> {
 }
 
 /// If --json is provided, parse it; otherwise use clap-parsed args
-fn merge_or_use<T: DeserializeOwned>(
-    json_input: Option<&str>,
-    clap_args: T,
-) -> Result<T, OvError> {
+fn merge_or_use<T: DeserializeOwned>(json_input: Option<&str>, clap_args: T) -> Result<T, OvError> {
     match json_input {
         Some(json_str) => parse_json_input(json_str),
         None => Ok(clap_args),
@@ -273,8 +269,7 @@ fn cmd_backlinks(ctx: &Ctx, args: cli::links::BacklinksArgs) -> Result<(), OvErr
         .to_string_lossy()
         .to_string();
 
-    let backlinks =
-        service::find_backlinks(&vault.root, &target_stem, vault.notes(), args.context);
+    let backlinks = service::find_backlinks(&vault.root, &target_stem, vault.notes(), args.context);
 
     let count = backlinks.len();
     output::print_output(&backlinks, count, ctx.jsonl, &ctx.fields);
@@ -294,11 +289,7 @@ fn cmd_config(ctx: &Ctx, args: cli::config::ConfigArgs) -> Result<(), OvError> {
         }
         (Some(key), None) => {
             let value = match key {
-                "vault_path" => app_config
-                    .vault_path
-                    .as_deref()
-                    .unwrap_or("")
-                    .to_string(),
+                "vault_path" => app_config.vault_path.as_deref().unwrap_or("").to_string(),
                 _ => {
                     return Err(OvError::InvalidInput(format!("Unknown config key: {key}")));
                 }
@@ -322,9 +313,7 @@ fn cmd_config(ctx: &Ctx, args: cli::config::ConfigArgs) -> Result<(), OvError> {
             output::print_output(&data, 1, ctx.jsonl, &ctx.fields);
         }
         (None, Some(_)) => {
-            return Err(OvError::InvalidInput(
-                "value requires key".to_string(),
-            ));
+            return Err(OvError::InvalidInput("value requires key".to_string()));
         }
     }
 
@@ -336,8 +325,7 @@ fn cmd_config(ctx: &Ctx, args: cli::config::ConfigArgs) -> Result<(), OvError> {
 fn cmd_search(ctx: &Ctx, args: cli::search::SearchArgs) -> Result<(), OvError> {
     let query = require_field(args.query, "query")?;
     let vault_path = paths::resolve_vault_path(ctx.vault.as_deref())?;
-    let mut results =
-        search::search(&vault_path, &query, args.limit, args.offset, args.snippet)?;
+    let mut results = search::search(&vault_path, &query, args.limit, args.offset, args.snippet)?;
 
     // search returns limit+1 to detect has_more
     let has_more = results.len() > args.limit;
@@ -541,9 +529,7 @@ fn sanitize_title(title: &str) -> Result<String, OvError> {
     }
     let clean = title.strip_suffix(".md").unwrap_or(title);
     if clean.is_empty() {
-        return Err(OvError::InvalidInput(
-            "Title cannot be empty".to_string(),
-        ));
+        return Err(OvError::InvalidInput("Title cannot be empty".to_string()));
     }
     let filename = format!("{clean}.md");
     if filename.len() > 255 {
@@ -652,9 +638,7 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
         ));
     }
     if args.vars.is_some() && args.template.is_none() {
-        return Err(OvError::InvalidInput(
-            "vars requires template".to_string(),
-        ));
+        return Err(OvError::InvalidInput("vars requires template".to_string()));
     }
 
     let vault = open_vault(ctx)?;

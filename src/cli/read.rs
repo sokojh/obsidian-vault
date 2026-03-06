@@ -22,4 +22,3 @@ pub struct ReadArgs {
     #[serde(default)]
     pub raw: bool,
 }
-

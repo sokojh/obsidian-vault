@@ -6,12 +6,7 @@ use serde::Serialize;
 use self::json::ApiResponse;
 
 /// Print structured data as JSON. Supports field filtering and JSONL streaming.
-pub fn print_output<T: Serialize>(
-    data: T,
-    count: usize,
-    jsonl: bool,
-    field_list: &Option<String>,
-) {
+pub fn print_output<T: Serialize>(data: T, count: usize, jsonl: bool, field_list: &Option<String>) {
     if jsonl {
         print_jsonl(&data, field_list);
     } else {
@@ -51,10 +46,7 @@ fn print_jsonl<T: Serialize>(data: &T, field_list: &Option<String>) {
             println!("{line}");
         }
     } else {
-        println!(
-            "{}",
-            serde_json::to_string(&json_val).unwrap_or_default()
-        );
+        println!("{}", serde_json::to_string(&json_val).unwrap_or_default());
     }
 }
 

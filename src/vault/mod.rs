@@ -137,7 +137,6 @@ impl Vault {
         }
     }
 
-
     /// Get relative path for a file
     pub fn relative_path(&self, file: &Path) -> String {
         file.strip_prefix(&self.root)

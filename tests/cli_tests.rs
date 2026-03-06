@@ -50,9 +50,7 @@ fn test_list_sort_title() {
 
 #[test]
 fn test_list_limit() {
-    ov().args(["list", "--limit", "2"])
-        .assert()
-        .success();
+    ov().args(["list", "--limit", "2"]).assert().success();
 }
 
 #[test]
@@ -146,9 +144,7 @@ fn test_tags_sort_name() {
 
 #[test]
 fn test_tags_min_count() {
-    ov().args(["tags", "--min-count", "2"])
-        .assert()
-        .success();
+    ov().args(["tags", "--min-count", "2"]).assert().success();
 }
 
 // ─── stats ───────────────────────────────────────────────────────────────
@@ -321,9 +317,12 @@ fn test_create_and_read() {
 
     ov().args([
         "create",
-        "--title", "Test Note",
-        "--dir", "Daily",
-        "--tags", "test,tmp",
+        "--title",
+        "Test Note",
+        "--dir",
+        "Daily",
+        "--tags",
+        "test,tmp",
     ])
     .assert()
     .success()
@@ -351,8 +350,10 @@ fn test_create_if_not_exists() {
     // docker already exists in the fixture
     ov().args([
         "create",
-        "--title", "docker",
-        "--dir", "Zettelkasten",
+        "--title",
+        "docker",
+        "--dir",
+        "Zettelkasten",
         "--if-not-exists",
     ])
     .assert()
@@ -398,8 +399,10 @@ fn test_append_to_note() {
 
     ov().args([
         "append",
-        "--note", "AppendTest",
-        "--content", "New content line",
+        "--note",
+        "AppendTest",
+        "--content",
+        "New content line",
     ])
     .assert()
     .success()
@@ -420,18 +423,24 @@ fn test_append_with_section() {
 
     ov().args([
         "create",
-        "--title", "AppendSectionTest",
-        "--template", "Person",
-        "--dir", "People",
+        "--title",
+        "AppendSectionTest",
+        "--template",
+        "Person",
+        "--dir",
+        "People",
     ])
     .assert()
     .success();
 
     ov().args([
         "append",
-        "--note", "AppendSectionTest",
-        "--section", "Timeline",
-        "--content", "Met at conference.",
+        "--note",
+        "AppendSectionTest",
+        "--section",
+        "Timeline",
+        "--content",
+        "Met at conference.",
     ])
     .assert()
     .success()
@@ -456,9 +465,11 @@ fn test_append_with_date() {
 
     ov().args([
         "append",
-        "--note", "AppendDateTest",
+        "--note",
+        "AppendDateTest",
         "--date",
-        "--content", "Dated entry.",
+        "--content",
+        "Dated entry.",
     ])
     .assert()
     .success();
@@ -476,8 +487,10 @@ fn test_append_with_date() {
 fn test_append_dry_run() {
     ov().args([
         "append",
-        "--note", "docker",
-        "--content", "test",
+        "--note",
+        "docker",
+        "--content",
+        "test",
         "--dry-run",
         "--fuzzy",
     ])
@@ -495,10 +508,14 @@ fn test_create_with_person_template() {
 
     ov().args([
         "create",
-        "--title", "TestPerson",
-        "--template", "Person",
-        "--dir", "People",
-        "--vars", "org=imweb,role=SRE",
+        "--title",
+        "TestPerson",
+        "--template",
+        "Person",
+        "--dir",
+        "People",
+        "--vars",
+        "org=imweb,role=SRE",
     ])
     .assert()
     .success()
@@ -524,9 +541,12 @@ fn test_create_with_frontmatter() {
 
     ov().args([
         "create",
-        "--title", "FrontmatterTest",
-        "--dir", "Daily",
-        "--frontmatter", r#"{"type":"article","status":"draft"}"#,
+        "--title",
+        "FrontmatterTest",
+        "--dir",
+        "Daily",
+        "--frontmatter",
+        r#"{"type":"article","status":"draft"}"#,
     ])
     .assert()
     .success()
@@ -543,19 +563,28 @@ fn test_create_with_frontmatter() {
 
 #[test]
 fn test_create_frontmatter_invalid_json() {
-    ov().args(["create", "--title", "BadFm", "--frontmatter", "{broken json"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("INVALID_INPUT"));
+    ov().args([
+        "create",
+        "--title",
+        "BadFm",
+        "--frontmatter",
+        "{broken json",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("INVALID_INPUT"));
 }
 
 #[test]
 fn test_create_frontmatter_template_conflict() {
     ov().args([
         "create",
-        "--title", "ConflictTest",
-        "--frontmatter", r#"{"type":"note"}"#,
-        "--template", "Person",
+        "--title",
+        "ConflictTest",
+        "--frontmatter",
+        r#"{"type":"note"}"#,
+        "--template",
+        "Person",
     ])
     .assert()
     .failure();
@@ -568,10 +597,14 @@ fn test_create_frontmatter_with_tags() {
 
     ov().args([
         "create",
-        "--title", "FmTagsTest",
-        "--dir", "Daily",
-        "--frontmatter", r#"{"type":"note"}"#,
-        "--tags", "devops,sre",
+        "--title",
+        "FmTagsTest",
+        "--dir",
+        "Daily",
+        "--frontmatter",
+        r#"{"type":"note"}"#,
+        "--tags",
+        "devops,sre",
     ])
     .assert()
     .success();
@@ -591,17 +624,24 @@ fn test_create_frontmatter_with_sections() {
 
     ov().args([
         "create",
-        "--title", "FmSectionTest",
-        "--dir", "Daily",
-        "--frontmatter", r#"{"type":"note"}"#,
-        "--sections", "Summary,Notes",
+        "--title",
+        "FmSectionTest",
+        "--dir",
+        "Daily",
+        "--frontmatter",
+        r#"{"type":"note"}"#,
+        "--sections",
+        "Summary,Notes",
     ])
     .assert()
     .success();
 
     let content = std::fs::read_to_string(&path).unwrap();
     assert!(content.contains("---"), "should have YAML frontmatter");
-    assert!(content.contains("## Summary"), "should have Summary section");
+    assert!(
+        content.contains("## Summary"),
+        "should have Summary section"
+    );
     assert!(content.contains("## Notes"), "should have Notes section");
 
     let _ = std::fs::remove_file(&path);
@@ -616,9 +656,12 @@ fn test_create_with_sections_only() {
 
     ov().args([
         "create",
-        "--title", "SectionsTest",
-        "--dir", "Daily",
-        "--sections", "Summary,References",
+        "--title",
+        "SectionsTest",
+        "--dir",
+        "Daily",
+        "--sections",
+        "Summary,References",
     ])
     .assert()
     .success();
@@ -639,9 +682,12 @@ fn test_create_with_content_only() {
 
     ov().args([
         "create",
-        "--title", "ContentTest",
-        "--dir", "Daily",
-        "--content", "This is initial content.",
+        "--title",
+        "ContentTest",
+        "--dir",
+        "Daily",
+        "--content",
+        "This is initial content.",
     ])
     .assert()
     .success();
@@ -661,10 +707,14 @@ fn test_create_template_with_sections() {
 
     ov().args([
         "create",
-        "--title", "TemplateSectionsTest",
-        "--dir", "People",
-        "--template", "Person",
-        "--sections", "Extra Notes,Follow-ups",
+        "--title",
+        "TemplateSectionsTest",
+        "--dir",
+        "People",
+        "--template",
+        "Person",
+        "--sections",
+        "Extra Notes,Follow-ups",
     ])
     .assert()
     .success();
@@ -686,10 +736,14 @@ fn test_create_template_with_content() {
 
     ov().args([
         "create",
-        "--title", "TemplateContentTest",
-        "--dir", "People",
-        "--template", "Person",
-        "--content", "Extra note appended after template.",
+        "--title",
+        "TemplateContentTest",
+        "--dir",
+        "People",
+        "--template",
+        "Person",
+        "--content",
+        "Extra note appended after template.",
     ])
     .assert()
     .success();
@@ -697,7 +751,9 @@ fn test_create_template_with_content() {
     ov().args(["read", "--note", "TemplateContentTest", "--raw"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Extra note appended after template."));
+        .stdout(predicate::str::contains(
+            "Extra note appended after template.",
+        ));
 
     let _ = std::fs::remove_file(&path);
 }
@@ -709,10 +765,14 @@ fn test_create_sections_with_content() {
 
     ov().args([
         "create",
-        "--title", "SectionContentTest",
-        "--dir", "Daily",
-        "--sections", "Summary",
-        "--content", "Body text here.",
+        "--title",
+        "SectionContentTest",
+        "--dir",
+        "Daily",
+        "--sections",
+        "Summary",
+        "--content",
+        "Body text here.",
     ])
     .assert()
     .success();
@@ -775,8 +835,10 @@ fn test_create_path_traversal_blocked() {
 fn test_create_template_not_found() {
     ov().args([
         "create",
-        "--title", "TemplateNotFoundTest",
-        "--template", "NonExistentTemplate",
+        "--title",
+        "TemplateNotFoundTest",
+        "--template",
+        "NonExistentTemplate",
     ])
     .assert()
     .failure()
