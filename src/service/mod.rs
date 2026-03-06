@@ -165,10 +165,12 @@ pub struct VaultStats {
     pub total_size_bytes: u64,
     pub total_size_mb: String,
     pub evicted_files: usize,
+    pub skipped_files: usize,
     pub avg_words_per_note: usize,
     pub avg_links_per_note: usize,
     pub top_tags: Vec<TagCount>,
     pub directory_list: Vec<String>,
+    pub source: String,
 }
 
 /// Compute stats from pre-built summaries (index-first path, no file I/O)
@@ -204,6 +206,7 @@ pub fn compute_stats_from_summaries(dirs: Vec<String>, summaries: &[NoteSummary]
         total_size_bytes: 0, // not available from index
         total_size_mb: "N/A".to_string(),
         evicted_files: 0,
+        skipped_files: 0,
         avg_words_per_note: if total_notes > 0 {
             total_words / total_notes
         } else {
@@ -216,6 +219,7 @@ pub fn compute_stats_from_summaries(dirs: Vec<String>, summaries: &[NoteSummary]
         },
         top_tags,
         directory_list: dirs,
+        source: "index".to_string(),
     }
 }
 
@@ -255,6 +259,7 @@ pub fn compute_stats(vault: &Vault, notes: &[Note]) -> VaultStats {
         total_size_bytes: total_size,
         total_size_mb: format!("{:.1}", total_size as f64 / 1_048_576.0),
         evicted_files: evicted,
+        skipped_files: vault.skipped_count(),
         avg_words_per_note: if total_notes > 0 {
             total_words / total_notes
         } else {
@@ -267,6 +272,7 @@ pub fn compute_stats(vault: &Vault, notes: &[Note]) -> VaultStats {
         },
         top_tags,
         directory_list: dirs,
+        source: "full_scan".to_string(),
     }
 }
 

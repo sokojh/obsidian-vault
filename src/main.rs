@@ -186,6 +186,30 @@ fn cmd_read(ctx: &Ctx, args: cli::read::ReadArgs) -> Result<(), OvError> {
     let relative = vault.relative_path(&file_path);
     let note = vault.read_note(&relative)?;
 
+    // --section: extract a specific section only
+    if let Some(ref section_name) = args.section {
+        let section_body = note
+            .body
+            .as_deref()
+            .and_then(|body| vault::extract_section(body, section_name));
+
+        if args.raw {
+            if let Some(ref body) = section_body {
+                print!("{body}");
+            }
+            return Ok(());
+        }
+
+        let data = serde_json::json!({
+            "title": note.title,
+            "path": note.path,
+            "section": section_name,
+            "body": section_body,
+        });
+        output::print_output(&data, 1, ctx.jsonl, &ctx.fields);
+        return Ok(());
+    }
+
     if args.raw {
         if let Some(ref body) = note.body {
             print!("{body}");
@@ -339,7 +363,8 @@ fn cmd_config(ctx: &Ctx, args: cli::config::ConfigArgs) -> Result<(), OvError> {
 fn cmd_search(ctx: &Ctx, args: cli::search::SearchArgs) -> Result<(), OvError> {
     let query = require_field(args.query, "query")?;
     let vault_path = paths::resolve_vault_path(ctx.vault.as_deref())?;
-    let mut results = search::search(&vault_path, &query, args.limit, args.offset, args.snippet)?;
+    let search_result = search::search(&vault_path, &query, args.limit, args.offset, args.snippet)?;
+    let mut results = search_result.hits;
 
     // search returns limit+1 to detect has_more
     let has_more = results.len() > args.limit;
@@ -352,6 +377,10 @@ fn cmd_search(ctx: &Ctx, args: cli::search::SearchArgs) -> Result<(), OvError> {
         ("offset", serde_json::json!(args.offset)),
         ("limit", serde_json::json!(args.limit)),
         ("has_more", serde_json::json!(has_more)),
+        (
+            "has_more_accurate",
+            serde_json::json!(!search_result.window_exhausted),
+        ),
     ];
     output::print_with_meta(&results, count, ctx.jsonl, &ctx.fields, meta);
 
@@ -1079,7 +1108,8 @@ fn schema_describe(cmd_name: &str) -> Result<serde_json::Value, OvError> {
                     {"name": "note", "type": "string", "required": true, "description": "Note name or path"},
                     {"name": "fuzzy", "type": "boolean", "required": false, "default": false, "description": "Enable fuzzy matching"},
                     {"name": "no_body", "type": "boolean", "required": false, "default": false, "description": "Exclude body content from output"},
-                    {"name": "raw", "type": "boolean", "required": false, "default": false, "description": "Output raw body text only (no JSON wrapping)"}
+                    {"name": "raw", "type": "boolean", "required": false, "default": false, "description": "Output raw body text only (bypasses JSON — for piping/context injection)"},
+                    {"name": "section", "type": "string", "required": false, "description": "Extract only a specific section by heading name"}
                 ]
             },
             "output": {
@@ -1107,7 +1137,7 @@ fn schema_describe(cmd_name: &str) -> Result<serde_json::Value, OvError> {
             "output": {
                 "type": "array",
                 "fields": ["title", "path", "tags", "score", "snippet"],
-                "meta": ["offset", "limit", "has_more"]
+                "meta": ["offset", "limit", "has_more", "has_more_accurate"]
             },
             "examples": [
                 {"description": "Keyword search", "json": "{\"query\":\"kubernetes\"}"},
@@ -1142,7 +1172,7 @@ fn schema_describe(cmd_name: &str) -> Result<serde_json::Value, OvError> {
             "input": {"fields": []},
             "output": {
                 "type": "object",
-                "fields": ["total_notes", "total_words", "total_links", "unique_tags", "directories", "total_size_bytes", "total_size_mb", "avg_words_per_note", "avg_links_per_note", "top_tags", "directory_list"]
+                "fields": ["total_notes", "total_words", "total_links", "unique_tags", "directories", "total_size_bytes", "total_size_mb", "skipped_files", "avg_words_per_note", "avg_links_per_note", "top_tags", "directory_list", "source"]
             },
             "examples": [
                 {"description": "Get vault stats", "cli": "ov stats"}

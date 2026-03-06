@@ -21,4 +21,8 @@ pub struct ReadArgs {
     #[arg(long)]
     #[serde(default)]
     pub raw: bool,
+
+    /// Extract only a specific section by heading name
+    #[arg(long)]
+    pub section: Option<String>,
 }
