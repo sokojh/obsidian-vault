@@ -1,11 +1,7 @@
 use clap::Args;
+use serde::Deserialize;
 
-#[derive(Args)]
-#[command(after_long_help = "\x1b[1mExamples:\x1b[0m
-  ov graph --format json                                    # Full vault graph
-  ov graph --center \"ElasticSearch\" --depth 2 --format json  # Subgraph around a note
-  ov graph --graph-format dot                                # Graphviz DOT output
-  ov graph --graph-format mermaid                            # Mermaid diagram")]
+#[derive(Args, Deserialize, Default)]
 pub struct GraphArgs {
     /// Center note for subgraph extraction (omit for full vault graph)
     #[arg(long)]
@@ -13,9 +9,23 @@ pub struct GraphArgs {
 
     /// Maximum BFS traversal depth from center node
     #[arg(long, default_value = "2")]
+    #[serde(default = "default_depth")]
     pub depth: usize,
 
     /// Graph serialization format: json, dot (Graphviz), or mermaid
     #[arg(long, default_value = "json")]
+    #[serde(default = "default_graph_format")]
     pub graph_format: String,
+
+    /// Enable fuzzy matching for center note resolution
+    #[arg(long)]
+    #[serde(default)]
+    pub fuzzy: bool,
+}
+
+fn default_depth() -> usize {
+    2
+}
+fn default_graph_format() -> String {
+    "json".to_string()
 }

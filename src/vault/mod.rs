@@ -89,8 +89,10 @@ impl Vault {
         })
     }
 
-    /// Resolve a note name to a path using fuzzy matching
-    pub fn resolve_note(&self, query: &str) -> OvResult<PathBuf> {
+    /// Resolve a note name to a path.
+    /// When `fuzzy` is true, falls back to fuzzy matching.
+    /// When `fuzzy` is false (default for agents), only exact matches are returned.
+    pub fn resolve_note_with_mode(&self, query: &str, fuzzy: bool) -> OvResult<PathBuf> {
         // 1. Exact match by filename (without .md)
         for file in &self.files {
             let stem = file.file_stem().unwrap_or_default().to_string_lossy();
@@ -110,7 +112,11 @@ impl Vault {
             return Ok(full);
         }
 
-        // 3. Fuzzy match
+        if !fuzzy {
+            return Err(OvError::NoteNotFound(query.to_string()));
+        }
+
+        // 3. Fuzzy match (opt-in only)
         let matcher = SkimMatcherV2::default();
         let mut best_match: Option<(i64, &PathBuf)> = None;
 

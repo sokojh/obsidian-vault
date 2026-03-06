@@ -49,8 +49,6 @@ fuzzy-matcher = "0.3"
 # Search
 tantivy = "0.22"
 
-# Output
-colored = "3"
 
 [dev-dependencies]
 tempfile = "3"

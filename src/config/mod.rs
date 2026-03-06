@@ -11,9 +11,6 @@ pub struct AppConfig {
     /// Default vault path
     pub vault_path: Option<String>,
 
-    /// Default output format
-    pub default_format: Option<String>,
-
     /// Directories to exclude from scanning
     pub exclude_dirs: Option<Vec<String>>,
 }

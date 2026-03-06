@@ -22,7 +22,10 @@ pub fn search(
         parsed.text.clone()
     };
 
-    // Search with a larger limit to allow for post-filtering
+    // Search with a larger window to allow for post-filtering.
+    // NOTE: has_more accuracy depends on this window being large enough.
+    // For heavily filtered queries on large vaults, matches beyond this
+    // window may exist even when has_more reports false.
     let extra_limit = limit + offset + 100;
     let mut results = reader::search(vault_root, &tantivy_query, extra_limit, 0, with_snippet)?;
 
@@ -67,8 +70,8 @@ pub fn search(
         });
     }
 
-    // Apply offset and limit
-    let results: Vec<SearchHit> = results.into_iter().skip(offset).take(limit).collect();
+    // Apply offset and limit (take limit+1 to detect has_more)
+    let results: Vec<SearchHit> = results.into_iter().skip(offset).take(limit + 1).collect();
 
     Ok(results)
 }
