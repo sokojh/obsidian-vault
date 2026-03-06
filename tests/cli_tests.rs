@@ -1,5 +1,6 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
+use serial_test::serial;
 use std::path::PathBuf;
 
 fn vault_path() -> PathBuf {
@@ -15,7 +16,9 @@ fn ov() -> Command {
 // ─── list ────────────────────────────────────────────────────────────────
 
 #[test]
+#[serial]
 fn test_list_json() {
+    let _ = ov().args(["index", "clear"]).assert();
     ov().args(["list"])
         .assert()
         .success()
@@ -24,7 +27,9 @@ fn test_list_json() {
 }
 
 #[test]
+#[serial]
 fn test_list_filter_dir() {
+    let _ = ov().args(["index", "clear"]).assert();
     ov().args(["list", "--dir", "Zettelkasten"])
         .assert()
         .success()
@@ -33,7 +38,9 @@ fn test_list_filter_dir() {
 }
 
 #[test]
+#[serial]
 fn test_list_filter_tag() {
+    let _ = ov().args(["index", "clear"]).assert();
     ov().args(["list", "--tag", "#TDD"])
         .assert()
         .success()
@@ -41,7 +48,9 @@ fn test_list_filter_tag() {
 }
 
 #[test]
+#[serial]
 fn test_list_sort_title() {
+    let _ = ov().args(["index", "clear"]).assert();
     ov().args(["list", "--sort", "title"])
         .assert()
         .success()
@@ -49,12 +58,16 @@ fn test_list_sort_title() {
 }
 
 #[test]
+#[serial]
 fn test_list_limit() {
+    let _ = ov().args(["index", "clear"]).assert();
     ov().args(["list", "--limit", "2"]).assert().success();
 }
 
 #[test]
+#[serial]
 fn test_list_json_input() {
+    let _ = ov().args(["index", "clear"]).assert();
     ov().args(["list", "--json", r#"{"dir":"Zettelkasten","limit":3}"#])
         .assert()
         .success()
@@ -62,6 +75,7 @@ fn test_list_json_input() {
 }
 
 #[test]
+#[serial]
 fn test_list_has_more() {
     // Clear stale index to ensure full scan works
     let _ = ov().args(["index", "clear"]).assert();
@@ -74,6 +88,7 @@ fn test_list_has_more() {
 // ─── read ────────────────────────────────────────────────────────────────
 
 #[test]
+#[serial]
 fn test_read_exact() {
     ov().args(["read", "--note", "docker"])
         .assert()
@@ -83,6 +98,7 @@ fn test_read_exact() {
 }
 
 #[test]
+#[serial]
 fn test_read_fuzzy() {
     ov().args(["read", "--note", "kube", "--fuzzy"])
         .assert()
@@ -91,6 +107,7 @@ fn test_read_fuzzy() {
 }
 
 #[test]
+#[serial]
 fn test_read_exact_no_fuzzy() {
     // "kube" should NOT match without --fuzzy
     ov().args(["read", "--note", "kube"])
@@ -100,6 +117,7 @@ fn test_read_exact_no_fuzzy() {
 }
 
 #[test]
+#[serial]
 fn test_read_raw() {
     ov().args(["read", "--note", "docker", "--raw"])
         .assert()
@@ -108,6 +126,7 @@ fn test_read_raw() {
 }
 
 #[test]
+#[serial]
 fn test_read_not_found() {
     ov().args(["read", "--note", "nonexistent_note_xyz"])
         .assert()
@@ -116,6 +135,7 @@ fn test_read_not_found() {
 }
 
 #[test]
+#[serial]
 fn test_read_json_input() {
     ov().args(["read", "--json", r#"{"note":"docker"}"#])
         .assert()
@@ -126,7 +146,9 @@ fn test_read_json_input() {
 // ─── tags ────────────────────────────────────────────────────────────────
 
 #[test]
+#[serial]
 fn test_tags_json() {
+    let _ = ov().args(["index", "clear"]).assert();
     ov().args(["tags"])
         .assert()
         .success()
@@ -135,7 +157,9 @@ fn test_tags_json() {
 }
 
 #[test]
+#[serial]
 fn test_tags_sort_name() {
+    let _ = ov().args(["index", "clear"]).assert();
     ov().args(["tags", "--sort", "name"])
         .assert()
         .success()
@@ -143,14 +167,18 @@ fn test_tags_sort_name() {
 }
 
 #[test]
+#[serial]
 fn test_tags_min_count() {
+    let _ = ov().args(["index", "clear"]).assert();
     ov().args(["tags", "--min-count", "2"]).assert().success();
 }
 
 // ─── stats ───────────────────────────────────────────────────────────────
 
 #[test]
+#[serial]
 fn test_stats_json() {
+    let _ = ov().args(["index", "clear"]).assert();
     ov().args(["stats"])
         .assert()
         .success()
@@ -162,6 +190,7 @@ fn test_stats_json() {
 // ─── links ───────────────────────────────────────────────────────────────
 
 #[test]
+#[serial]
 fn test_links() {
     ov().args(["links", "--note", "kubernetes-basics"])
         .assert()
@@ -171,6 +200,7 @@ fn test_links() {
 }
 
 #[test]
+#[serial]
 fn test_backlinks() {
     ov().args(["backlinks", "--note", "docker"])
         .assert()
@@ -182,6 +212,7 @@ fn test_backlinks() {
 }
 
 #[test]
+#[serial]
 fn test_backlinks_with_context() {
     ov().args(["backlinks", "--note", "docker", "--context"])
         .assert()
@@ -191,6 +222,7 @@ fn test_backlinks_with_context() {
 // ─── config ──────────────────────────────────────────────────────────────
 
 #[test]
+#[serial]
 fn test_config_show() {
     ov().args(["config"])
         .assert()
@@ -201,6 +233,7 @@ fn test_config_show() {
 // ─── fields ──────────────────────────────────────────────────────────────
 
 #[test]
+#[serial]
 fn test_fields_selector() {
     ov().args(["list", "--fields", "title,tags"])
         .assert()
@@ -211,6 +244,7 @@ fn test_fields_selector() {
 // ─── vault not found ─────────────────────────────────────────────────────
 
 #[test]
+#[serial]
 fn test_vault_not_found() {
     Command::cargo_bin("ov")
         .unwrap()
@@ -223,6 +257,7 @@ fn test_vault_not_found() {
 // ─── index + search ─────────────────────────────────────────────────────
 
 #[test]
+#[serial]
 fn test_index_build_and_search() {
     let _ = ov().args(["index", "clear"]).assert();
 
@@ -258,6 +293,7 @@ fn test_index_build_and_search() {
 // ─── graph ───────────────────────────────────────────────────────────────
 
 #[test]
+#[serial]
 fn test_graph_json() {
     ov().args(["graph"])
         .assert()
@@ -267,6 +303,7 @@ fn test_graph_json() {
 }
 
 #[test]
+#[serial]
 fn test_graph_center() {
     ov().args(["graph", "--center", "docker", "--depth", "1", "--fuzzy"])
         .assert()
@@ -275,6 +312,7 @@ fn test_graph_center() {
 }
 
 #[test]
+#[serial]
 fn test_graph_dot() {
     ov().args(["graph", "--graph-format", "dot"])
         .assert()
@@ -283,6 +321,7 @@ fn test_graph_dot() {
 }
 
 #[test]
+#[serial]
 fn test_graph_mermaid() {
     ov().args(["graph", "--graph-format", "mermaid"])
         .assert()
@@ -293,6 +332,7 @@ fn test_graph_mermaid() {
 // ─── daily ───────────────────────────────────────────────────────────────
 
 #[test]
+#[serial]
 fn test_daily_dry_run() {
     ov().args(["daily", "--dry-run"])
         .assert()
@@ -301,6 +341,7 @@ fn test_daily_dry_run() {
 }
 
 #[test]
+#[serial]
 fn test_daily_existing() {
     ov().args(["daily", "--date", "2024-01-15"])
         .assert()
@@ -311,6 +352,7 @@ fn test_daily_existing() {
 // ─── create ──────────────────────────────────────────────────────────────
 
 #[test]
+#[serial]
 fn test_create_and_read() {
     let path = vault_path().join("Daily/Test Note.md");
     let _ = std::fs::remove_file(&path);
@@ -337,6 +379,7 @@ fn test_create_and_read() {
 }
 
 #[test]
+#[serial]
 fn test_create_dry_run() {
     ov().args(["create", "--title", "DryRunTest", "--dry-run"])
         .assert()
@@ -346,6 +389,7 @@ fn test_create_dry_run() {
 }
 
 #[test]
+#[serial]
 fn test_create_if_not_exists() {
     // docker already exists in the fixture
     ov().args([
@@ -362,6 +406,7 @@ fn test_create_if_not_exists() {
 }
 
 #[test]
+#[serial]
 fn test_create_duplicate() {
     ov().args(["create", "--title", "docker", "--dir", "Zettelkasten"])
         .assert()
@@ -370,6 +415,7 @@ fn test_create_duplicate() {
 }
 
 #[test]
+#[serial]
 fn test_create_json_input() {
     let path = vault_path().join("Daily/JsonCreateTest.md");
     let _ = std::fs::remove_file(&path);
@@ -389,6 +435,7 @@ fn test_create_json_input() {
 // ─── append ──────────────────────────────────────────────────────────────
 
 #[test]
+#[serial]
 fn test_append_to_note() {
     let path = vault_path().join("Daily/AppendTest.md");
     let _ = std::fs::remove_file(&path);
@@ -417,6 +464,7 @@ fn test_append_to_note() {
 }
 
 #[test]
+#[serial]
 fn test_append_with_section() {
     let path = vault_path().join("People/AppendSectionTest.md");
     let _ = std::fs::remove_file(&path);
@@ -455,6 +503,7 @@ fn test_append_with_section() {
 }
 
 #[test]
+#[serial]
 fn test_append_with_date() {
     let path = vault_path().join("Daily/AppendDateTest.md");
     let _ = std::fs::remove_file(&path);
@@ -484,6 +533,7 @@ fn test_append_with_date() {
 }
 
 #[test]
+#[serial]
 fn test_append_dry_run() {
     ov().args([
         "append",
@@ -502,6 +552,7 @@ fn test_append_dry_run() {
 // ─── create with template ────────────────────────────────────────────────
 
 #[test]
+#[serial]
 fn test_create_with_person_template() {
     let path = vault_path().join("People/TestPerson.md");
     let _ = std::fs::remove_file(&path);
@@ -535,6 +586,7 @@ fn test_create_with_person_template() {
 // ─── frontmatter tests ──────────────────────────────────────────────────
 
 #[test]
+#[serial]
 fn test_create_with_frontmatter() {
     let path = vault_path().join("Daily/FrontmatterTest.md");
     let _ = std::fs::remove_file(&path);
@@ -562,6 +614,7 @@ fn test_create_with_frontmatter() {
 }
 
 #[test]
+#[serial]
 fn test_create_frontmatter_invalid_json() {
     ov().args([
         "create",
@@ -576,6 +629,7 @@ fn test_create_frontmatter_invalid_json() {
 }
 
 #[test]
+#[serial]
 fn test_create_frontmatter_template_conflict() {
     ov().args([
         "create",
@@ -591,6 +645,7 @@ fn test_create_frontmatter_template_conflict() {
 }
 
 #[test]
+#[serial]
 fn test_create_frontmatter_with_tags() {
     let path = vault_path().join("Daily/FmTagsTest.md");
     let _ = std::fs::remove_file(&path);
@@ -618,6 +673,7 @@ fn test_create_frontmatter_with_tags() {
 }
 
 #[test]
+#[serial]
 fn test_create_frontmatter_with_sections() {
     let path = vault_path().join("Daily/FmSectionTest.md");
     let _ = std::fs::remove_file(&path);
@@ -650,6 +706,7 @@ fn test_create_frontmatter_with_sections() {
 // ─── sections and content ────────────────────────────────────────────────
 
 #[test]
+#[serial]
 fn test_create_with_sections_only() {
     let path = vault_path().join("Daily/SectionsTest.md");
     let _ = std::fs::remove_file(&path);
@@ -676,6 +733,7 @@ fn test_create_with_sections_only() {
 }
 
 #[test]
+#[serial]
 fn test_create_with_content_only() {
     let path = vault_path().join("Daily/ContentTest.md");
     let _ = std::fs::remove_file(&path);
@@ -701,6 +759,7 @@ fn test_create_with_content_only() {
 }
 
 #[test]
+#[serial]
 fn test_create_template_with_sections() {
     let path = vault_path().join("People/TemplateSectionsTest.md");
     let _ = std::fs::remove_file(&path);
@@ -730,6 +789,7 @@ fn test_create_template_with_sections() {
 }
 
 #[test]
+#[serial]
 fn test_create_template_with_content() {
     let path = vault_path().join("People/TemplateContentTest.md");
     let _ = std::fs::remove_file(&path);
@@ -759,6 +819,7 @@ fn test_create_template_with_content() {
 }
 
 #[test]
+#[serial]
 fn test_create_sections_with_content() {
     let path = vault_path().join("Daily/SectionContentTest.md");
     let _ = std::fs::remove_file(&path);
@@ -789,6 +850,7 @@ fn test_create_sections_with_content() {
 // ─── title sanitization ─────────────────────────────────────────────────
 
 #[test]
+#[serial]
 fn test_create_title_with_slash_rejected() {
     ov().args(["create", "--title", "bad/title"])
         .assert()
@@ -797,6 +859,7 @@ fn test_create_title_with_slash_rejected() {
 }
 
 #[test]
+#[serial]
 fn test_create_title_dotdot_rejected() {
     ov().args(["create", "--title", ".."])
         .assert()
@@ -805,6 +868,7 @@ fn test_create_title_dotdot_rejected() {
 }
 
 #[test]
+#[serial]
 fn test_create_title_md_extension_stripped() {
     let path = vault_path().join("Daily/StripMdTest.md");
     let _ = std::fs::remove_file(&path);
@@ -824,6 +888,7 @@ fn test_create_title_md_extension_stripped() {
 }
 
 #[test]
+#[serial]
 fn test_create_path_traversal_blocked() {
     ov().args(["create", "--title", "EscapeTest", "--dir", "../../tmp"])
         .assert()
@@ -832,6 +897,7 @@ fn test_create_path_traversal_blocked() {
 }
 
 #[test]
+#[serial]
 fn test_create_template_not_found() {
     ov().args([
         "create",
@@ -848,6 +914,7 @@ fn test_create_template_not_found() {
 // ─── search type prefix ─────────────────────────────────────────────────
 
 #[test]
+#[serial]
 fn test_search_type_prefix() {
     let _ = ov().args(["index", "clear"]).assert();
     ov().args(["index", "build"]).assert().success();
@@ -861,6 +928,7 @@ fn test_search_type_prefix() {
 // ─── read person note ────────────────────────────────────────────────────
 
 #[test]
+#[serial]
 fn test_read_person_note() {
     ov().args(["read", "--note", "김철수"])
         .assert()
@@ -872,6 +940,7 @@ fn test_read_person_note() {
 // ─── schema introspection ────────────────────────────────────────────────
 
 #[test]
+#[serial]
 fn test_schema_commands() {
     ov().args(["schema", "commands"])
         .assert()
@@ -881,6 +950,7 @@ fn test_schema_commands() {
 }
 
 #[test]
+#[serial]
 fn test_schema_describe() {
     ov().args(["schema", "describe", "--command", "create"])
         .assert()
@@ -892,6 +962,7 @@ fn test_schema_describe() {
 }
 
 #[test]
+#[serial]
 fn test_schema_skill() {
     ov().args(["schema", "skill"])
         .assert()
@@ -903,6 +974,7 @@ fn test_schema_skill() {
 // ─── structured errors ──────────────────────────────────────────────────
 
 #[test]
+#[serial]
 fn test_error_has_code_and_hint() {
     ov().args(["read", "--note", "totally_nonexistent_note_xyz"])
         .assert()
@@ -914,6 +986,7 @@ fn test_error_has_code_and_hint() {
 // ─── JSONL mode ──────────────────────────────────────────────────────────
 
 #[test]
+#[serial]
 fn test_jsonl_output() {
     ov().args(["--jsonl", "list", "--limit", "3"])
         .assert()
@@ -927,6 +1000,7 @@ fn test_jsonl_output() {
 // ─── missing required field ──────────────────────────────────────────────
 
 #[test]
+#[serial]
 fn test_missing_required_field() {
     ov().args(["read"])
         .assert()
@@ -935,9 +1009,225 @@ fn test_missing_required_field() {
 }
 
 #[test]
+#[serial]
 fn test_create_missing_title() {
     ov().args(["create"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("MISSING_FIELD"));
+}
+
+// ─── P1: Clippings false positive fix ────────────────────────────────────
+
+#[test]
+#[serial]
+fn test_clippings_false_positive_body_author() {
+    // A StandardYaml note with "author:" in body should NOT be classified as Clippings
+    ov().args(["read", "--note", "yaml-with-author-body"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"format\":\"standard_yaml\""))
+        .stdout(predicate::str::contains("Design Patterns"));
+}
+
+// ─── P1: Stats source field ─────────────────────────────────────────────
+
+#[test]
+#[serial]
+fn test_stats_source_field() {
+    // Clear index to force full_scan path
+    let _ = ov().args(["index", "clear"]).assert();
+    ov().args(["stats"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"source\":\"full_scan\""));
+}
+
+#[test]
+#[serial]
+fn test_stats_skipped_files_field() {
+    let _ = ov().args(["index", "clear"]).assert();
+    ov().args(["stats"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"skipped_files\":"));
+}
+
+// ─── P2: Aliases parsing ────────────────────────────────────────────────
+
+#[test]
+#[serial]
+fn test_aliases_parsed() {
+    ov().args(["read", "--note", "yaml-with-author-body"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("GoF Patterns"))
+        .stdout(predicate::str::contains("DP"));
+}
+
+// ─── P2: Read --section ─────────────────────────────────────────────────
+
+#[test]
+#[serial]
+fn test_read_section() {
+    ov().args(["read", "--note", "김철수", "--section", "Timeline"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"section\":\"Timeline\""))
+        .stdout(predicate::str::contains("온보딩 미팅"));
+}
+
+#[test]
+#[serial]
+fn test_read_section_raw() {
+    ov().args(["read", "--note", "김철수", "--section", "Timeline", "--raw"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("온보딩 미팅"))
+        // raw mode should NOT output JSON wrapping
+        .stdout(predicate::str::contains("\"ok\":true").not());
+}
+
+#[test]
+#[serial]
+fn test_read_section_not_found() {
+    // Requesting a non-existent section should return null body
+    ov().args([
+        "read",
+        "--note",
+        "김철수",
+        "--section",
+        "NonExistentSection",
+    ])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains("\"body\":null"));
+}
+
+// ─── P2: Schema section field ───────────────────────────────────────────
+
+#[test]
+#[serial]
+fn test_schema_describe_read_has_section() {
+    ov().args(["schema", "describe", "--command", "read"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"name\":\"section\""));
+}
+
+// ─── P2: Search has_more_accurate ───────────────────────────────────────
+
+#[test]
+#[serial]
+fn test_search_has_more_accurate() {
+    let _ = ov().args(["index", "clear"]).assert();
+    ov().args(["index", "build"]).assert().success();
+
+    ov().args(["search", "--query", "kubernetes"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("has_more_accurate"));
+
+    let _ = ov().args(["index", "clear"]).assert();
+}
+
+// ─── Security: template path traversal ──────────────────────────────────
+
+#[test]
+#[serial]
+fn test_template_path_traversal_blocked() {
+    ov().args([
+        "create",
+        "--title",
+        "TemplateEscape",
+        "--template",
+        "../../etc/passwd",
+        "--dry-run",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("INVALID_INPUT"));
+}
+
+#[test]
+#[serial]
+fn test_template_dotdot_blocked() {
+    ov().args([
+        "create",
+        "--title",
+        "TemplateEscape2",
+        "--template",
+        "../outside",
+        "--dry-run",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("INVALID_INPUT"));
+}
+
+// ─── Security: symlink boundary ─────────────────────────────────────────
+
+#[test]
+#[serial]
+#[cfg(unix)]
+fn test_symlink_boundary_enforcement() {
+    use std::os::unix::fs as unix_fs;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let vault_root = tmp.path().join("vault");
+    std::fs::create_dir_all(vault_root.join(".obsidian")).unwrap();
+    std::fs::write(vault_root.join("legit.md"), "# Legit").unwrap();
+
+    // Create external file
+    let external_dir = tmp.path().join("external");
+    std::fs::create_dir_all(&external_dir).unwrap();
+    std::fs::write(external_dir.join("secret.md"), "# Secret data").unwrap();
+
+    // Create symlink inside vault pointing outside
+    unix_fs::symlink(&external_dir, vault_root.join("escape")).unwrap();
+
+    // ov list should NOT include the external file
+    let mut cmd = Command::cargo_bin("ov").unwrap();
+    cmd.arg("--vault")
+        .arg(&vault_root)
+        .args(["list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("secret").not());
+}
+
+// ─── Stale index cleanup ────────────────────────────────────────────────
+
+#[test]
+#[serial]
+fn test_stale_index_cleanup() {
+    let _ = ov().args(["index", "clear"]).assert();
+
+    // Create a temporary note, build index, delete note, rebuild
+    let path = vault_path().join("Daily/StaleTest.md");
+    let _ = std::fs::remove_file(&path);
+
+    ov().args(["create", "--title", "StaleTest", "--dir", "Daily"])
+        .assert()
+        .success();
+
+    ov().args(["index", "build"]).assert().success();
+
+    // Verify it's in the index
+    ov().args(["search", "--query", "StaleTest"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("StaleTest"));
+
+    // Delete the file and rebuild
+    std::fs::remove_file(&path).unwrap();
+    ov().args(["index", "build"]).assert().success();
+
+    // Should no longer appear in search
+    ov().args(["search", "--query", "StaleTest"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("StaleTest").not());
+
+    let _ = ov().args(["index", "clear"]).assert();
 }

@@ -26,6 +26,9 @@ pub struct Frontmatter {
     pub status: Option<String>,
     /// Tags from frontmatter (e.g., ["#imweb", "#devops"])
     pub tags: Vec<String>,
+    /// Aliases for this note (Obsidian core feature)
+    #[serde(default)]
+    pub aliases: Vec<String>,
     /// Title (from YAML title field or Clippings)
     pub title: Option<String>,
     /// Author (from Clippings)
