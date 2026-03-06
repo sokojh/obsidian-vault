@@ -1169,6 +1169,7 @@ fn test_template_dotdot_blocked() {
 
 #[test]
 #[serial]
+#[cfg(unix)]
 fn test_symlink_boundary_enforcement() {
     use std::os::unix::fs as unix_fs;
 
