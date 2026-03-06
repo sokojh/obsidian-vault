@@ -766,6 +766,15 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
             content.push_str("---\n");
         }
     } else if let Some(ref template_name) = args.template {
+        // Validate template name: reject path separators and traversal
+        if template_name.contains('/')
+            || template_name.contains('\\')
+            || template_name.contains("..")
+        {
+            return Err(OvError::InvalidInput(
+                "Template name cannot contain path separators or '..'".to_string(),
+            ));
+        }
         let template_dir = vault
             .obsidian_config
             .template_folder
@@ -775,6 +784,18 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
             .root
             .join(template_dir)
             .join(format!("{template_name}.md"));
+        // Boundary check: ensure resolved template is within vault
+        if let Ok(canonical_template) = template_path.canonicalize() {
+            let canonical_root = vault
+                .root
+                .canonicalize()
+                .unwrap_or_else(|_| vault.root.clone());
+            if !canonical_template.starts_with(&canonical_root) {
+                return Err(OvError::InvalidInput(format!(
+                    "Template path escapes vault boundary: {template_name}"
+                )));
+            }
+        }
         if !template_path.exists() {
             return Err(OvError::NoteNotFound(format!(
                 "Template not found: {template_name}"

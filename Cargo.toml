@@ -57,6 +57,7 @@ ureq = { version = "2", features = ["json"] }
 tempfile = "3"
 assert_cmd = "2"
 predicates = "3"
+serial_test = "3"
 
 [profile.release]
 opt-level = 3
