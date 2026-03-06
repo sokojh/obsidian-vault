@@ -5,6 +5,14 @@ use std::path::Path;
 use crate::error::OvResult;
 use crate::index::reader::{self, SearchHit};
 
+/// Search result with accuracy metadata
+pub struct SearchResult {
+    pub hits: Vec<SearchHit>,
+    /// True when the pre-filter window was fully consumed, meaning
+    /// has_more may be inaccurate due to post-filtering
+    pub window_exhausted: bool,
+}
+
 /// High-level search with prefix parsing and post-filtering
 pub fn search(
     vault_root: &Path,
@@ -12,7 +20,7 @@ pub fn search(
     limit: usize,
     offset: usize,
     with_snippet: bool,
-) -> OvResult<Vec<SearchHit>> {
+) -> OvResult<SearchResult> {
     let parsed = query::parse_query(raw_query);
 
     // Build tantivy query from text part
@@ -28,6 +36,8 @@ pub fn search(
     // window may exist even when has_more reports false.
     let extra_limit = limit + offset + 100;
     let mut results = reader::search(vault_root, &tantivy_query, extra_limit, 0, with_snippet)?;
+
+    let pre_filter_count = results.len();
 
     // Post-filter by prefix conditions
     if !parsed.tags.is_empty() {
@@ -71,7 +81,10 @@ pub fn search(
     }
 
     // Apply offset and limit (take limit+1 to detect has_more)
-    let results: Vec<SearchHit> = results.into_iter().skip(offset).take(limit + 1).collect();
+    let hits: Vec<SearchHit> = results.into_iter().skip(offset).take(limit + 1).collect();
 
-    Ok(results)
+    Ok(SearchResult {
+        hits,
+        window_exhausted: pre_filter_count >= extra_limit,
+    })
 }

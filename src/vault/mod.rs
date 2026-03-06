@@ -40,11 +40,48 @@ pub fn find_section_insert_point(content: &str, section: &str) -> usize {
     content.len()
 }
 
+/// Extract the content of a named section from markdown text.
+/// Returns the text between the section heading and the next same-or-higher level heading.
+pub fn extract_section(content: &str, section_name: &str) -> Option<String> {
+    static HEADING_RE: OnceLock<Regex> = OnceLock::new();
+    let heading_re = HEADING_RE.get_or_init(|| Regex::new(r"(?m)^(#{1,6})\s+(.+)$").unwrap());
+
+    let mut section_start: Option<usize> = None;
+    let mut section_level: Option<usize> = None;
+
+    for cap in heading_re.captures_iter(content) {
+        let level = cap[1].len();
+        let heading_text = cap[2].trim();
+        let match_start = cap.get(0).unwrap().start();
+        let match_end = cap.get(0).unwrap().end();
+
+        if let Some(lvl) = section_level {
+            if level <= lvl {
+                // Found the next same-or-higher level heading — section ends here
+                let section_body = &content[section_start.unwrap()..match_start];
+                return Some(section_body.trim().to_string());
+            }
+        } else if heading_text.eq_ignore_ascii_case(section_name) {
+            section_level = Some(level);
+            section_start = Some(match_end);
+        }
+    }
+
+    // Section found but no closing heading — extends to end of content
+    if let Some(start) = section_start {
+        let section_body = &content[start..];
+        return Some(section_body.trim().to_string());
+    }
+
+    None
+}
+
 pub struct Vault {
     pub root: PathBuf,
     pub obsidian_config: config::ObsidianConfig,
     files: Vec<PathBuf>,
     notes_cache: OnceLock<Vec<Note>>,
+    skipped_count: OnceLock<usize>,
 }
 
 impl Vault {
@@ -62,6 +99,7 @@ impl Vault {
             obsidian_config,
             files,
             notes_cache: OnceLock::new(),
+            skipped_count: OnceLock::new(),
         })
     }
 
@@ -82,11 +120,23 @@ impl Vault {
     /// Get all notes, cached after first access (parallel I/O via rayon)
     pub fn notes(&self) -> &[Note] {
         self.notes_cache.get_or_init(|| {
-            self.files
+            let results: Vec<_> = self
+                .files
                 .par_iter()
-                .filter_map(|f| extract::extract_note(&self.root, f).ok())
-                .collect()
+                .map(|f| extract::extract_note(&self.root, f))
+                .collect();
+            let total = results.len();
+            let notes: Vec<Note> = results.into_iter().filter_map(|r| r.ok()).collect();
+            let _ = self.skipped_count.set(total - notes.len());
+            notes
         })
+    }
+
+    /// Number of files that failed to parse during notes() loading
+    pub fn skipped_count(&self) -> usize {
+        // Ensure notes are loaded first
+        let _ = self.notes();
+        *self.skipped_count.get().unwrap_or(&0)
     }
 
     /// Resolve a note name to a path.

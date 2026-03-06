@@ -941,3 +941,108 @@ fn test_create_missing_title() {
         .failure()
         .stderr(predicate::str::contains("MISSING_FIELD"));
 }
+
+// ─── P1: Clippings false positive fix ────────────────────────────────────
+
+#[test]
+fn test_clippings_false_positive_body_author() {
+    // A StandardYaml note with "author:" in body should NOT be classified as Clippings
+    ov().args(["read", "--note", "yaml-with-author-body"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"format\":\"standard_yaml\""))
+        .stdout(predicate::str::contains("Design Patterns"));
+}
+
+// ─── P1: Stats source field ─────────────────────────────────────────────
+
+#[test]
+fn test_stats_source_field() {
+    // Clear index to force full_scan path
+    let _ = ov().args(["index", "clear"]).assert();
+    ov().args(["stats"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"source\":\"full_scan\""));
+}
+
+#[test]
+fn test_stats_skipped_files_field() {
+    let _ = ov().args(["index", "clear"]).assert();
+    ov().args(["stats"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"skipped_files\":"));
+}
+
+// ─── P2: Aliases parsing ────────────────────────────────────────────────
+
+#[test]
+fn test_aliases_parsed() {
+    ov().args(["read", "--note", "yaml-with-author-body"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("GoF Patterns"))
+        .stdout(predicate::str::contains("DP"));
+}
+
+// ─── P2: Read --section ─────────────────────────────────────────────────
+
+#[test]
+fn test_read_section() {
+    ov().args(["read", "--note", "김철수", "--section", "Timeline"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"section\":\"Timeline\""))
+        .stdout(predicate::str::contains("온보딩 미팅"));
+}
+
+#[test]
+fn test_read_section_raw() {
+    ov().args(["read", "--note", "김철수", "--section", "Timeline", "--raw"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("온보딩 미팅"))
+        // raw mode should NOT output JSON wrapping
+        .stdout(predicate::str::contains("\"ok\":true").not());
+}
+
+#[test]
+fn test_read_section_not_found() {
+    // Requesting a non-existent section should return null body
+    ov().args([
+        "read",
+        "--note",
+        "김철수",
+        "--section",
+        "NonExistentSection",
+    ])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains("\"body\":null"));
+}
+
+// ─── P2: Schema section field ───────────────────────────────────────────
+
+#[test]
+fn test_schema_describe_read_has_section() {
+    ov().args(["schema", "describe", "--command", "read"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"name\":\"section\""));
+}
+
+// ─── P2: Search has_more_accurate ───────────────────────────────────────
+
+#[test]
+fn test_search_has_more_accurate() {
+    let _ = ov().args(["index", "clear"]).assert();
+    ov().args(["index", "build"]).assert().success();
+
+    ov().args(["search", "--query", "kubernetes"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("has_more_accurate"));
+
+    let _ = ov().args(["index", "clear"]).assert();
+}
