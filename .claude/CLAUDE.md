@@ -62,9 +62,17 @@ src/
 - `ov schema skill` — markdown skill file for agent context injection
 
 ### Context Window Management
-- `--fields title,path,tags` — select only needed fields
+- `--fields title,path,tags` — select only needed fields (works on ALL commands)
 - `--jsonl` — NDJSON streaming (no wrapper, one object per line)
 - `meta.has_more` + `meta.next_offset` for pagination
+- All commands use unified `output::print_output()` — `--fields` is never bypassed
+
+### Input Hardening
+- Path traversal blocked before `--dry-run` and `--if-not-exists` early returns
+- Control characters (U+0000..U+001F except \n, \r, \t) stripped from all input
+- Title validation: rejects `/`, `\`, `\0`, `..`, empty, >255 bytes
+- `config --value` without `--key` returns `INVALID_INPUT` error
+- `tags` and `sections` accept both string (`"a,b"`) and array (`["a","b"]`) via `serde_helpers::string_or_array`
 
 ## Architecture Patterns
 
