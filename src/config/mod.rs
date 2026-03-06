@@ -1,4 +1,5 @@
 pub mod paths;
+pub mod update_check;
 
 use std::fs;
 

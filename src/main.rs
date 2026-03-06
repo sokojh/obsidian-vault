@@ -23,6 +23,7 @@ use vault::Vault;
 
 fn main() {
     let cli = Cli::parse();
+    config::update_check::maybe_notify_update();
 
     if let Err(e) = run(cli) {
         let err_resp = ErrorResponse::from_error(&e);
