@@ -13,6 +13,39 @@ use crate::error::{OvError, OvResult};
 use crate::extract;
 use crate::model::note::Note;
 
+/// Compute byte ranges of fenced code blocks (``` or ~~~) so headings inside
+/// them can be skipped.
+fn code_fence_ranges(content: &str) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut in_fence = false;
+    let mut fence_start = 0;
+    let mut pos = 0;
+
+    for line in content.split('\n') {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            if in_fence {
+                ranges.push((fence_start, pos + line.len()));
+                in_fence = false;
+            } else {
+                fence_start = pos;
+                in_fence = true;
+            }
+        }
+        pos += line.len() + 1; // +1 for the \n
+    }
+
+    if in_fence {
+        ranges.push((fence_start, content.len()));
+    }
+
+    ranges
+}
+
+fn is_inside_fence(offset: usize, fences: &[(usize, usize)]) -> bool {
+    fences.iter().any(|(s, e)| offset >= *s && offset < *e)
+}
+
 /// Find the byte offset to insert content within a named section.
 /// If the section is found, returns the position just before the next same-or-higher level heading.
 /// If no such heading exists, returns content.len() (file end).
@@ -21,12 +54,17 @@ pub fn find_section_insert_point(content: &str, section: &str) -> usize {
     static HEADING_RE: OnceLock<Regex> = OnceLock::new();
     let heading_re = HEADING_RE.get_or_init(|| Regex::new(r"(?m)^(#{1,6})\s+(.+)$").unwrap());
 
+    let fences = code_fence_ranges(content);
     let mut section_level: Option<usize> = None;
 
     for cap in heading_re.captures_iter(content) {
+        let match_start = cap.get(0).unwrap().start();
+        if is_inside_fence(match_start, &fences) {
+            continue;
+        }
+
         let level = cap[1].len();
         let heading_text = cap[2].trim();
-        let match_start = cap.get(0).unwrap().start();
 
         if let Some(lvl) = section_level {
             if level <= lvl {
@@ -42,17 +80,23 @@ pub fn find_section_insert_point(content: &str, section: &str) -> usize {
 
 /// Extract the content of a named section from markdown text.
 /// Returns the text between the section heading and the next same-or-higher level heading.
+/// Headings inside fenced code blocks are ignored.
 pub fn extract_section(content: &str, section_name: &str) -> Option<String> {
     static HEADING_RE: OnceLock<Regex> = OnceLock::new();
     let heading_re = HEADING_RE.get_or_init(|| Regex::new(r"(?m)^(#{1,6})\s+(.+)$").unwrap());
 
+    let fences = code_fence_ranges(content);
     let mut section_start: Option<usize> = None;
     let mut section_level: Option<usize> = None;
 
     for cap in heading_re.captures_iter(content) {
+        let match_start = cap.get(0).unwrap().start();
+        if is_inside_fence(match_start, &fences) {
+            continue;
+        }
+
         let level = cap[1].len();
         let heading_text = cap[2].trim();
-        let match_start = cap.get(0).unwrap().start();
         let match_end = cap.get(0).unwrap().end();
 
         if let Some(lvl) = section_level {
@@ -110,10 +154,37 @@ impl Vault {
 
     /// Read and parse a single note by path (relative to vault root)
     pub fn read_note(&self, relative_path: &str) -> OvResult<Note> {
+        // Reject absolute paths (Path::join would discard vault root)
+        if Path::new(relative_path).is_absolute() {
+            return Err(OvError::InvalidInput(format!(
+                "Absolute paths are not allowed: {relative_path}"
+            )));
+        }
+        // Reject path traversal
+        if relative_path.contains("..") {
+            return Err(OvError::InvalidInput(format!(
+                "Path traversal not allowed: {relative_path}"
+            )));
+        }
+
         let full_path = self.root.join(relative_path);
         if !full_path.exists() {
             return Err(OvError::NoteNotFound(relative_path.to_string()));
         }
+
+        // Boundary check: canonicalize and ensure file is within vault root
+        if let Ok(canonical) = full_path.canonicalize() {
+            let canonical_root = self
+                .root
+                .canonicalize()
+                .unwrap_or_else(|_| self.root.clone());
+            if !canonical.starts_with(&canonical_root) {
+                return Err(OvError::InvalidInput(format!(
+                    "Path escapes vault boundary: {relative_path}"
+                )));
+            }
+        }
+
         extract::extract_note(&self.root, &full_path)
     }
 
@@ -152,6 +223,10 @@ impl Vault {
         }
 
         // 2. Exact match by relative path
+        // Reject absolute paths and traversal before joining
+        if Path::new(query).is_absolute() || query.contains("..") {
+            return Err(OvError::InvalidInput(format!("Invalid note path: {query}")));
+        }
         let query_path = if query.ends_with(".md") {
             PathBuf::from(query)
         } else {
@@ -159,6 +234,18 @@ impl Vault {
         };
         let full = self.root.join(&query_path);
         if full.exists() {
+            // Boundary check: ensure resolved path is within vault root
+            if let Ok(canonical) = full.canonicalize() {
+                let canonical_root = self
+                    .root
+                    .canonicalize()
+                    .unwrap_or_else(|_| self.root.clone());
+                if !canonical.starts_with(&canonical_root) {
+                    return Err(OvError::InvalidInput(format!(
+                        "Path escapes vault boundary: {query}"
+                    )));
+                }
+            }
             return Ok(full);
         }
 
@@ -209,5 +296,45 @@ impl Vault {
         dirs.sort();
         dirs.dedup();
         dirs
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_section_skips_code_fence_heading() {
+        let content =
+            "## Notes\n\nSome text.\n\n```\n## Fake\ncode block\n```\n\n## Next\n\nMore text.\n";
+        let section = extract_section(content, "Notes").unwrap();
+        // "## Fake" is inside a code fence, so section runs until "## Next"
+        assert!(section.contains("Some text."));
+        assert!(section.contains("Fake"));
+        assert!(!section.contains("More text."));
+    }
+
+    #[test]
+    fn test_find_section_insert_skips_code_fence_heading() {
+        let content = "## Notes\n\nContent.\n\n```\n## Fake\n```\n\n## Real Next\n";
+        let pos = find_section_insert_point(content, "Notes");
+        // Should point to "## Real Next", not "## Fake"
+        assert_eq!(&content[pos..pos + 11], "## Real Nex");
+    }
+
+    #[test]
+    fn test_code_fence_ranges_basic() {
+        let content = "line1\n```\nfenced\n```\nline2\n";
+        let ranges = code_fence_ranges(content);
+        assert_eq!(ranges.len(), 1);
+        assert!(ranges[0].0 < ranges[0].1);
+    }
+
+    #[test]
+    fn test_code_fence_ranges_unclosed() {
+        let content = "line1\n```\nfenced forever\n";
+        let ranges = code_fence_ranges(content);
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].1, content.len());
     }
 }

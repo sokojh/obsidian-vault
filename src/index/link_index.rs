@@ -72,29 +72,14 @@ impl LinkIndex {
     }
 
     /// Build full vault graph.
-    /// Uses `path` as node ID to avoid collisions when different directories
-    /// contain notes with the same filename.
+    /// Uses stem as node ID (consistent with outgoing/incoming key format).
     pub fn to_graph(&self, notes: &[Note]) -> VaultGraph {
         let mut nodes = Vec::new();
         let mut edges = Vec::new();
         let mut all_ids: HashSet<String> = HashSet::new();
         let mut degree_map: HashMap<String, (usize, usize)> = HashMap::new();
 
-        // Map stem → list of paths for disambiguation
-        let mut stem_to_paths: HashMap<String, Vec<String>> = HashMap::new();
-        for note in notes {
-            let stem = Path::new(&note.path)
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            stem_to_paths
-                .entry(stem)
-                .or_default()
-                .push(note.path.clone());
-        }
-
-        // Build nodes from actual notes — use path as unique ID
+        // Build nodes from actual notes — use stem as ID (matches link index keys)
         for note in notes {
             let stem = Path::new(&note.path)
                 .file_stem()
@@ -105,18 +90,13 @@ impl LinkIndex {
             let out_count = self.outgoing.get(&stem).map(|v| v.len()).unwrap_or(0);
             let in_count = self.incoming.get(&stem).map(|v| v.len()).unwrap_or(0);
 
-            // Use path as ID when stem is ambiguous, otherwise keep stem for compatibility
-            let node_id = if stem_to_paths
-                .get(&stem)
-                .is_some_and(|paths| paths.len() > 1)
-            {
-                note.path.clone()
-            } else {
-                stem.clone()
-            };
+            // Skip duplicate stems (first note wins) to avoid broken graph
+            if all_ids.contains(&stem) {
+                continue;
+            }
 
             nodes.push(GraphNode {
-                id: node_id.clone(),
+                id: stem.clone(),
                 title: note.title.clone(),
                 dir: note.dir.clone(),
                 tags: note.tags.clone(),
@@ -124,8 +104,8 @@ impl LinkIndex {
                 backlink_count: in_count,
             });
 
-            degree_map.insert(node_id.clone(), (in_count, out_count));
-            all_ids.insert(node_id);
+            degree_map.insert(stem.clone(), (in_count, out_count));
+            all_ids.insert(stem);
         }
 
         // Build edges

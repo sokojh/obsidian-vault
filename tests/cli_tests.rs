@@ -1231,3 +1231,125 @@ fn test_stale_index_cleanup() {
 
     let _ = ov().args(["index", "clear"]).assert();
 }
+
+// ─── Boundary check: absolute path blocked ──────────────────────────────
+
+#[test]
+#[serial]
+fn test_read_absolute_path_blocked() {
+    ov().args(["read", "--note", "/tmp/evil.md"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("INVALID_INPUT"));
+}
+
+// ─── Boundary check: path traversal blocked ─────────────────────────────
+
+#[test]
+#[serial]
+fn test_read_path_traversal_blocked() {
+    ov().args(["read", "--note", "../../../etc/passwd"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("INVALID_INPUT"));
+}
+
+// ─── Boundary check: symlink escape via read ────────────────────────────
+
+#[test]
+#[serial]
+#[cfg(unix)]
+fn test_read_symlink_escape_blocked() {
+    use std::os::unix::fs as unix_fs;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let vault_root = tmp.path().join("vault");
+    std::fs::create_dir_all(vault_root.join(".obsidian")).unwrap();
+    std::fs::write(vault_root.join("legit.md"), "# Legit").unwrap();
+
+    // Create external file
+    let external_dir = tmp.path().join("external");
+    std::fs::create_dir_all(&external_dir).unwrap();
+    std::fs::write(external_dir.join("secret.md"), "# Secret data").unwrap();
+
+    // Create symlink inside vault pointing outside
+    unix_fs::symlink(&external_dir, vault_root.join("escape")).unwrap();
+
+    // ov read should NOT be able to read through symlink escape
+    let mut cmd = Command::cargo_bin("ov").unwrap();
+    cmd.arg("--vault")
+        .arg(&vault_root)
+        .args(["read", "--note", "escape/secret"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("INVALID_INPUT")
+                .or(predicate::str::contains("NOTE_NOT_FOUND")),
+        );
+}
+
+// ─── Section extraction: code fence awareness ───────────────────────────
+
+#[test]
+#[serial]
+fn test_read_section_skips_code_fence_heading() {
+    // Create a note with a heading inside a code fence
+    let note_path = vault_path().join("Zettelkasten/code-fence-test.md");
+    std::fs::write(
+        &note_path,
+        "# Code Fence Test\n\n## Real Section\n\nSome real content.\n\n```\n## Fake Heading\nThis is inside a code block.\n```\n\n## Next Section\n\nNext content.\n",
+    ).unwrap();
+
+    let output = ov()
+        .args([
+            "read",
+            "--note",
+            "code-fence-test",
+            "--section",
+            "Real Section",
+        ])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // The section should include the code fence content (it's between "Real Section" and "Next Section")
+    assert!(stdout.contains("Some real content"));
+    assert!(stdout.contains("Fake Heading"));
+
+    std::fs::remove_file(&note_path).unwrap();
+}
+
+// ─── Schema: section_mode documented ────────────────────────────────────
+
+#[test]
+#[serial]
+fn test_schema_describe_read_section_mode() {
+    ov().args(["schema", "describe", "--command", "read"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("section_mode"));
+}
+
+// ─── Clippings scope: author deep in body is NOT clippings ──────────────
+
+#[test]
+#[serial]
+fn test_clippings_deep_body_author_not_triggered() {
+    // Note with "author:" appearing after 5+ non-empty lines from YAML end
+    let note_path = vault_path().join("Zettelkasten/deep-author-test.md");
+    std::fs::write(
+        &note_path,
+        "---\ntitle: Deep Author Test\ntags:\n  - test\n---\n\nLine one\nLine two\nLine three\nLine four\nLine five\nLine six\nauthor: someone\n",
+    ).unwrap();
+
+    let output = ov()
+        .args(["read", "--note", "deep-author-test"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Should be standard_yaml, not clippings
+    assert!(stdout.contains("standard_yaml"));
+
+    std::fs::remove_file(&note_path).unwrap();
+}

@@ -135,13 +135,18 @@ fn try_parse_yaml_block(content: &str, _lines: &[&str]) -> Option<(Frontmatter, 
 
     let mut fm = Frontmatter::default();
 
-    // Check if this looks like a Clippings file (has Clippings-specific inline fields after YAML block)
+    // Check if this looks like a Clippings file (has Clippings-specific inline fields
+    // in the first 5 non-empty lines after the YAML block)
     const CLIPPINGS_FIELDS: &[&str] = &["author:", "source:", "clipped:"];
     let after_yaml = &content[yaml_end..];
-    let has_clippings_fields = after_yaml.lines().any(|l| {
-        let trimmed = l.trim().to_lowercase();
-        CLIPPINGS_FIELDS.iter().any(|f| trimmed.starts_with(f))
-    });
+    let has_clippings_fields = after_yaml
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .take(5)
+        .any(|l| {
+            let trimmed = l.trim().to_lowercase();
+            CLIPPINGS_FIELDS.iter().any(|f| trimmed.starts_with(f))
+        });
 
     if has_clippings_fields {
         fm.format = Some(FrontmatterFormat::Clippings);
@@ -353,5 +358,13 @@ mod tests {
         let content = "---\ntitle: Test\naliases:\n  - A\n---\nBody";
         let (fm, _) = parse_frontmatter(content);
         assert!(!fm.extra.contains_key("aliases"));
+    }
+
+    #[test]
+    fn test_clippings_deep_body_not_triggered() {
+        // "author:" appears after 5+ non-empty lines — should NOT trigger Clippings
+        let content = "---\ntitle: Deep Body\ntags:\n  - test\n---\n\nLine one\nLine two\nLine three\nLine four\nLine five\nLine six\nauthor: someone\n";
+        let (fm, _) = parse_frontmatter(content);
+        assert_eq!(fm.format, Some(FrontmatterFormat::StandardYaml));
     }
 }

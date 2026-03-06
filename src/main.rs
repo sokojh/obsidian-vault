@@ -1135,12 +1135,17 @@ fn schema_describe(cmd_name: &str) -> Result<serde_json::Value, OvError> {
             },
             "output": {
                 "type": "object",
-                "fields": ["title", "path", "dir", "frontmatter", "tags", "links", "headings", "word_count", "file_meta", "body"]
+                "fields": ["title", "path", "dir", "frontmatter", "tags", "links", "headings", "word_count", "file_meta", "body"],
+                "section_mode": {
+                    "description": "When --section is used, output shape changes to: {title, path, section, body}",
+                    "fields": ["title", "path", "section", "body"]
+                }
             },
             "examples": [
                 {"description": "Read a note exactly", "json": "{\"note\":\"ElasticSearch\"}"},
                 {"description": "Read with fuzzy matching", "json": "{\"note\":\"elastic\",\"fuzzy\":true}"},
-                {"description": "Metadata only", "json": "{\"note\":\"ElasticSearch\",\"no_body\":true}"}
+                {"description": "Metadata only", "json": "{\"note\":\"ElasticSearch\",\"no_body\":true}"},
+                {"description": "Read specific section", "json": "{\"note\":\"ElasticSearch\",\"section\":\"Timeline\"}"}
             ]
         }),
         "search" => serde_json::json!({
