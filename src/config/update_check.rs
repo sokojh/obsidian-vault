@@ -5,8 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::paths;
 
-const GITHUB_API_URL: &str =
-    "https://api.github.com/repos/sokojh/obsidian-vault/releases/latest";
+const GITHUB_API_URL: &str = "https://api.github.com/repos/sokojh/obsidian-vault/releases/latest";
 const CHECK_INTERVAL_SECS: u64 = 86400; // 24 hours
 
 #[derive(Debug, Serialize, Deserialize, Default)]
