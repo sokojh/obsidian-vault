@@ -287,16 +287,29 @@ fn cmd_config(ctx: &Ctx, args: cli::config::ConfigArgs) -> Result<(), OvError> {
             let json = serde_json::to_value(&app_config).unwrap_or_default();
             output::print_output(&json, 1, ctx.jsonl, &ctx.fields);
         }
-        (Some(key), None) => {
-            let value = match key {
-                "vault_path" => app_config.vault_path.as_deref().unwrap_or("").to_string(),
-                _ => {
-                    return Err(OvError::InvalidInput(format!("Unknown config key: {key}")));
-                }
-            };
-            let data = serde_json::json!({ "key": key, "value": value });
-            output::print_output(&data, 1, ctx.jsonl, &ctx.fields);
-        }
+        (Some(key), None) => match key {
+            "vault_path" => {
+                let value = app_config.vault_path.as_deref().unwrap_or("");
+                let data = serde_json::json!({ "key": key, "value": value });
+                output::print_output(&data, 1, ctx.jsonl, &ctx.fields);
+            }
+            "vaults" => {
+                let vaults: Vec<serde_json::Value> = paths::discover_vaults()
+                    .iter()
+                    .map(|p| {
+                        serde_json::json!({
+                            "path": p.to_string_lossy(),
+                            "name": p.file_name().unwrap_or_default().to_string_lossy(),
+                        })
+                    })
+                    .collect();
+                let count = vaults.len();
+                output::print_output(&vaults, count, ctx.jsonl, &ctx.fields);
+            }
+            _ => {
+                return Err(OvError::InvalidInput(format!("Unknown config key: {key}")));
+            }
+        },
         (Some(key), Some(value)) => {
             match key {
                 "vault_path" => app_config.vault_path = Some(value.to_string()),
@@ -1276,7 +1289,7 @@ fn schema_describe(cmd_name: &str) -> Result<serde_json::Value, OvError> {
             "has_side_effects": true,
             "input": {
                 "fields": [
-                    {"name": "key", "type": "string", "required": false, "enum": ["vault_path"], "description": "Config key"},
+                    {"name": "key", "type": "string", "required": false, "enum": ["vault_path", "vaults"], "description": "Config key. 'vaults' lists auto-detected vaults"},
                     {"name": "value", "type": "string", "required": false, "description": "Value to set"}
                 ]
             },
