@@ -1,17 +1,22 @@
 pub mod append;
+pub mod archive;
 pub mod config;
 pub mod create;
 pub mod daily;
+pub mod dead_links;
 pub mod graph;
 pub mod index;
 pub mod links;
 pub mod list;
+pub mod orphans;
 pub mod read;
 pub mod schema;
 pub mod search;
 pub mod serde_helpers;
 pub mod stats;
+pub mod stubs;
 pub mod tags;
+pub mod topics;
 
 use clap::{Parser, Subcommand};
 
@@ -85,4 +90,20 @@ pub enum Command {
 
     /// Introspect CLI schema — list commands, describe inputs/outputs, export skill file
     Schema(schema::SchemaArgs),
+
+    // ─── diagnostics (added 2026-05-10) ──────────────────────────────────
+    /// List notes with zero incoming links (orphans). Default excludes Files/_archive and docs/480ai
+    Orphans(orphans::OrphansArgs),
+
+    /// List notes whose body word count is below --max-words (default 100)
+    Stubs(stubs::StubsArgs),
+
+    /// List `[[wiki-links]]` whose target note doesn't exist in the vault
+    DeadLinks(dead_links::DeadLinksArgs),
+
+    /// List frontmatter `topics:` field with occurrence counts (counterpart to `tags`)
+    Topics(topics::TopicsArgs),
+
+    /// Move a note to Files/_archive/<YYYY-MM-DD>/ (or --to). Backlinks are NOT auto-updated; run `ov dead-links` afterwards
+    Archive(archive::ArchiveArgs),
 }

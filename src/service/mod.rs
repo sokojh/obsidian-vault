@@ -1,8 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use serde::Serialize;
 
+use crate::index::link_index::LinkIndex;
 use crate::model::link::Backlink;
 use crate::model::note::{Note, NoteSummary};
 use crate::model::tag::TagSummary;
@@ -71,8 +72,8 @@ fn apply_list_filters(summaries: &mut Vec<NoteSummary>, params: &ListParams) {
         summaries.retain(|n| n.modified.starts_with(&date_filter));
     }
     match params.sort.as_str() {
-        "title" => summaries.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase())),
-        "size" | "words" => summaries.sort_by(|a, b| b.word_count.cmp(&a.word_count)),
+        "title" => summaries.sort_by_key(|a| a.title.to_lowercase()),
+        "size" | "words" => summaries.sort_by_key(|a| std::cmp::Reverse(a.word_count)),
         _ => summaries.sort_by(|a, b| b.modified.cmp(&a.modified)),
     }
     if params.reverse {
@@ -137,7 +138,7 @@ fn finish_aggregate_tags(
 
     match params.sort.as_str() {
         "name" => summaries.sort_by(|a, b| a.tag.cmp(&b.tag)),
-        _ => summaries.sort_by(|a, b| b.count.cmp(&a.count)),
+        _ => summaries.sort_by_key(|s| std::cmp::Reverse(s.count)),
     }
 
     if let Some(limit) = params.limit {
@@ -207,16 +208,8 @@ pub fn compute_stats_from_summaries(dirs: Vec<String>, summaries: &[NoteSummary]
         total_size_mb: "N/A".to_string(),
         evicted_files: 0,
         skipped_files: 0,
-        avg_words_per_note: if total_notes > 0 {
-            total_words / total_notes
-        } else {
-            0
-        },
-        avg_links_per_note: if total_notes > 0 {
-            total_links / total_notes
-        } else {
-            0
-        },
+        avg_words_per_note: total_words.checked_div(total_notes).unwrap_or(0),
+        avg_links_per_note: total_links.checked_div(total_notes).unwrap_or(0),
         top_tags,
         directory_list: dirs,
         source: "index".to_string(),
@@ -260,16 +253,8 @@ pub fn compute_stats(vault: &Vault, notes: &[Note]) -> VaultStats {
         total_size_mb: format!("{:.1}", total_size as f64 / 1_048_576.0),
         evicted_files: evicted,
         skipped_files: vault.skipped_count(),
-        avg_words_per_note: if total_notes > 0 {
-            total_words / total_notes
-        } else {
-            0
-        },
-        avg_links_per_note: if total_notes > 0 {
-            total_links / total_notes
-        } else {
-            0
-        },
+        avg_words_per_note: total_words.checked_div(total_notes).unwrap_or(0),
+        avg_links_per_note: total_links.checked_div(total_notes).unwrap_or(0),
         top_tags,
         directory_list: dirs,
         source: "full_scan".to_string(),
@@ -318,4 +303,188 @@ pub fn find_backlinks(
     }
 
     backlinks
+}
+
+// ─── diagnose ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct OrphanNote {
+    pub title: String,
+    pub path: String,
+    pub dir: String,
+    pub modified: String,
+    pub word_count: usize,
+}
+
+/// Notes with zero incoming links (no backlinks). Optionally exclude given dirs.
+pub fn find_orphans(
+    notes: &[Note],
+    link_idx: &LinkIndex,
+    exclude_dirs: &[String],
+) -> Vec<OrphanNote> {
+    let mut out = Vec::new();
+    for note in notes {
+        if exclude_dirs.iter().any(|d| note.dir.starts_with(d)) {
+            continue;
+        }
+        let stem = Path::new(&note.path)
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let incoming_count = link_idx.incoming.get(&stem).map(|v| v.len()).unwrap_or(0);
+        if incoming_count == 0 {
+            out.push(OrphanNote {
+                title: note.title.clone(),
+                path: note.path.clone(),
+                dir: note.dir.clone(),
+                modified: note.file_meta.modified.clone(),
+                word_count: note.word_count,
+            });
+        }
+    }
+    out
+}
+
+#[derive(Debug, Serialize)]
+pub struct StubNote {
+    pub title: String,
+    pub path: String,
+    pub dir: String,
+    pub modified: String,
+    pub word_count: usize,
+}
+
+/// Notes whose body word count is below `max_words`. Optionally restrict by dir.
+pub fn find_stubs(notes: &[Note], max_words: usize, dir: Option<&str>) -> Vec<StubNote> {
+    notes
+        .iter()
+        .filter(|n| n.word_count <= max_words)
+        .filter(|n| dir.is_none_or(|d| n.dir.starts_with(d)))
+        .map(|n| StubNote {
+            title: n.title.clone(),
+            path: n.path.clone(),
+            dir: n.dir.clone(),
+            modified: n.file_meta.modified.clone(),
+            word_count: n.word_count,
+        })
+        .collect()
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeadLink {
+    pub source: String,
+    pub source_path: String,
+    pub target: String,
+    pub line: usize,
+}
+
+/// `[[wiki-link]]`s whose target doesn't exist as a note in the vault.
+///
+/// Match semantics (case-insensitive throughout, matching Obsidian + ov resolver):
+///   • bare stem    `[[Foo]]`            → check against filename stems
+///   • path-qualified `[[Folder/Foo]]`  → check against relative paths
+///   • aliases      `[[Plan]]` matches a note with `aliases: [Plan]`
+///   • heading anchor `[[Foo#Section]]` → strip `#…` and treat as `[[Foo]]`
+pub fn find_dead_links(notes: &[Note]) -> Vec<DeadLink> {
+    let known_stems_ci: HashSet<String> = notes
+        .iter()
+        .map(|n| {
+            Path::new(&n.path)
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_lowercase()
+        })
+        .collect();
+
+    // Path-qualified targets: lowercased relative path WITHOUT .md
+    let known_paths_ci: HashSet<String> = notes
+        .iter()
+        .map(|n| n.path.strip_suffix(".md").unwrap_or(&n.path).to_lowercase())
+        .collect();
+
+    // Aliases are case-insensitive too (Obsidian behavior)
+    let known_aliases_ci: HashSet<String> = notes
+        .iter()
+        .flat_map(|n| n.frontmatter.aliases.iter().map(|a| a.to_lowercase()))
+        .collect();
+
+    let mut dead = Vec::new();
+    for note in notes {
+        for link in &note.links {
+            // Strip optional heading anchor `Note#Section` before lookup
+            let raw = link
+                .target
+                .split_once('#')
+                .map(|(s, _)| s)
+                .unwrap_or(&link.target);
+            if raw.is_empty() {
+                continue; // self-link to current heading like [[#Section]]
+            }
+            let target_ci = raw.to_lowercase();
+
+            // 1. exact filename stem match
+            if known_stems_ci.contains(&target_ci) {
+                continue;
+            }
+            // 2. path-qualified target like [[Projects/Plan]] → match against relpath
+            if target_ci.contains('/') && known_paths_ci.contains(&target_ci) {
+                continue;
+            }
+            // 3. alias match
+            if known_aliases_ci.contains(&target_ci) {
+                continue;
+            }
+            dead.push(DeadLink {
+                source: note.title.clone(),
+                source_path: note.path.clone(),
+                target: link.target.clone(),
+                line: link.line,
+            });
+        }
+    }
+    dead
+}
+
+#[derive(Debug, Serialize)]
+pub struct TopicSummary {
+    pub topic: String,
+    pub count: usize,
+    pub notes: Vec<String>,
+}
+
+/// Aggregate frontmatter `topics:` field across all notes.
+/// `topics` is not a first-class Frontmatter field (yet) — pulled from `extra`.
+/// Counterpart to `aggregate_tags` but for the curated `topics` array.
+pub fn aggregate_topics(notes: &[Note], min_count: usize) -> Vec<TopicSummary> {
+    let mut counts: HashMap<String, Vec<String>> = HashMap::new();
+    for note in notes {
+        let Some(topics_val) = note.frontmatter.extra.get("topics") else {
+            continue;
+        };
+        let serde_json::Value::Array(arr) = topics_val else {
+            continue;
+        };
+        for item in arr {
+            if let serde_json::Value::String(topic) = item {
+                counts
+                    .entry(topic.clone())
+                    .or_default()
+                    .push(note.title.clone());
+            }
+        }
+    }
+    let mut summaries: Vec<TopicSummary> = counts
+        .into_iter()
+        .filter(|(_, notes)| notes.len() >= min_count)
+        .map(|(topic, notes)| TopicSummary {
+            count: notes.len(),
+            topic,
+            notes,
+        })
+        .collect();
+    // Sort by count desc, then topic asc
+    summaries.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.topic.cmp(&b.topic)));
+    summaries
 }

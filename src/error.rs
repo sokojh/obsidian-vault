@@ -78,16 +78,60 @@ impl OvError {
 
     pub fn hint(&self) -> Option<&'static str> {
         match self {
-            OvError::VaultNotFound(_) => Some("Set OV_VAULT env or use --vault flag"),
-            OvError::IndexNotBuilt => Some("Run `ov index build` to create the search index"),
-            OvError::NoteNotFound(_) => {
-                Some("Use `ov list` to find available notes, or try --fuzzy flag")
-            }
-            OvError::AlreadyExists(_) => Some("Use --if-not-exists to skip silently"),
-            OvError::MissingField(_) => {
-                Some("Use `ov schema describe <command>` to see required fields")
-            }
-            _ => None,
+            OvError::General(_) => None,
+            OvError::VaultNotFound(_) => Some(
+                "Set OV_VAULT env var or use --vault <PATH>. \
+                 Vault must contain at least one .md file to be valid.",
+            ),
+            OvError::IndexNotBuilt => Some(
+                "Run `ov index build` to create the search index. \
+                 Tantivy index is required for `search`/`graph` commands. \
+                 List/read/tags work without index but slower (cold scan).",
+            ),
+            OvError::QueryParse(_) => Some(
+                "Search query syntax: plain keywords, or prefixed filters. \
+                 Examples: `tag:idea`, `in:Zettelkasten`, `title:플랜`, `date:2026-05`, `type:zettel`. \
+                 Combine with AND/OR. Run `ov schema describe --command search` for examples.",
+            ),
+            OvError::NoteNotFound(_) => Some(
+                "Try one of: (1) `ov read --note <name> --fuzzy` for fuzzy match, \
+                 (2) `ov list --dir <folder>` to browse, \
+                 (3) `ov search --query <keyword>` to find by content.",
+            ),
+            OvError::AlreadyExists(_) => Some(
+                "Use --if-not-exists to skip silently and treat as success. \
+                 Or use `ov append --note <title>` to add to the existing note. \
+                 To overwrite intentionally, delete the file first.",
+            ),
+            OvError::InvalidInput(_) => Some(
+                "Run `ov schema describe --command <name>` to see expected input format. \
+                 For --json payload, ensure valid JSON with snake_case keys matching the args struct.",
+            ),
+            OvError::MissingField(_) => Some(
+                "Run `ov schema describe --command <name>` to see required fields and examples.",
+            ),
+            OvError::Io(_) => Some(
+                "Check file permissions and that the vault path is accessible. \
+                 If using iCloud, ensure files are downloaded (not placeholder).",
+            ),
+            OvError::Yaml(_) => Some(
+                "Frontmatter YAML must be valid. \
+                 Common issues: unquoted special chars, tab indentation (use spaces), missing closing `---`. \
+                 Use `ov read --note <name>` to inspect the broken file.",
+            ),
+            OvError::Json(_) => Some(
+                "JSON must be valid (double quotes, no trailing commas). \
+                 For passing via shell, prefer single quotes around the JSON: --json '{\"key\":\"value\"}'.",
+            ),
+            OvError::Toml(_) => Some(
+                "Config TOML invalid. Inspect with `ov config get --all` or open ~/.config/ov/config.toml.",
+            ),
+            OvError::TomlSerialize(_) => Some(
+                "Failed to write config TOML. Check ~/.config/ov/ permissions.",
+            ),
+            OvError::WalkDir(_) => Some(
+                "File scan failed. Check vault directory permissions and that path exists.",
+            ),
         }
     }
 }

@@ -22,13 +22,77 @@ use output::json::ErrorResponse;
 use vault::Vault;
 
 fn main() {
-    let cli = Cli::parse();
+    // Use try_parse so clap errors become JSON instead of human-formatted stderr.
+    // Help/Version are normal exits, not errors — let clap render them.
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) => {
+            use clap::error::ErrorKind;
+            match e.kind() {
+                // Only --help / --version are normal human exits. Missing-subcommand
+                // (no args at all, or `ov` alone) goes through the JSON error path so
+                // agents always see a structured response.
+                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => e.exit(),
+                _ => {
+                    let ov_err = clap_error_to_ov(&e);
+                    let err_resp = ErrorResponse::from_error(&ov_err);
+                    eprintln!("{}", err_resp.to_json_string());
+                    process::exit(ov_err.exit_code());
+                }
+            }
+        }
+    };
     config::update_check::maybe_notify_update();
 
     if let Err(e) = run(cli) {
         let err_resp = ErrorResponse::from_error(&e);
         eprintln!("{}", err_resp.to_json_string());
         process::exit(e.exit_code());
+    }
+}
+
+/// Convert clap parse errors into OvError so agents see consistent JSON output.
+fn clap_error_to_ov(e: &clap::Error) -> OvError {
+    use clap::error::{ContextKind, ErrorKind};
+    let kind = e.kind();
+
+    let get_ctx = |k: ContextKind| {
+        e.get(k)
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "?".to_string())
+    };
+
+    let msg = match kind {
+        ErrorKind::UnknownArgument => {
+            format!("Unknown argument: {}", get_ctx(ContextKind::InvalidArg))
+        }
+        ErrorKind::InvalidValue => format!(
+            "Invalid value `{}` for argument {}",
+            get_ctx(ContextKind::InvalidValue),
+            get_ctx(ContextKind::InvalidArg)
+        ),
+        ErrorKind::MissingRequiredArgument => format!(
+            "Missing required argument: {}",
+            get_ctx(ContextKind::InvalidArg)
+        ),
+        ErrorKind::InvalidSubcommand => format!(
+            "Unknown subcommand: {}",
+            get_ctx(ContextKind::InvalidSubcommand)
+        ),
+        _ => e
+            .render()
+            .to_string()
+            .lines()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("CLI parse error")
+            .trim_start_matches("error: ")
+            .trim()
+            .to_string(),
+    };
+
+    match kind {
+        ErrorKind::MissingRequiredArgument => OvError::MissingField(msg),
+        _ => OvError::InvalidInput(msg),
     }
 }
 
@@ -120,6 +184,26 @@ fn run(cli: Cli) -> Result<(), OvError> {
         }
         Command::Index(args) => cmd_index(&ctx, args),
         Command::Schema(args) => cmd_schema(&ctx, args),
+        Command::Orphans(args) => {
+            let args = merge_or_use(json_input, args)?;
+            cmd_orphans(&ctx, args)
+        }
+        Command::Stubs(args) => {
+            let args = merge_or_use(json_input, args)?;
+            cmd_stubs(&ctx, args)
+        }
+        Command::DeadLinks(args) => {
+            let args = merge_or_use(json_input, args)?;
+            cmd_dead_links(&ctx, args)
+        }
+        Command::Topics(args) => {
+            let args = merge_or_use(json_input, args)?;
+            cmd_topics(&ctx, args)
+        }
+        Command::Archive(args) => {
+            let args = merge_or_use(json_input, args)?;
+            cmd_archive(&ctx, args)
+        }
     }
 }
 
@@ -361,7 +445,8 @@ fn cmd_config(ctx: &Ctx, args: cli::config::ConfigArgs) -> Result<(), OvError> {
 // ─── search ──────────────────────────────────────────────────────────────
 
 fn cmd_search(ctx: &Ctx, args: cli::search::SearchArgs) -> Result<(), OvError> {
-    let query = require_field(args.query, "query")?;
+    // Accept query as positional or --query (positional takes precedence when both set is impossible due to conflicts_with)
+    let query = require_field(args.query.or(args.query_pos), "query")?;
     let vault_path = paths::resolve_vault_path(ctx.vault.as_deref())?;
     let search_result = search::search(&vault_path, &query, args.limit, args.offset, args.snippet)?;
     let mut results = search_result.hits;
@@ -373,7 +458,7 @@ fn cmd_search(ctx: &Ctx, args: cli::search::SearchArgs) -> Result<(), OvError> {
     }
 
     let count = results.len();
-    let meta = vec![
+    let mut meta = vec![
         ("offset", serde_json::json!(args.offset)),
         ("limit", serde_json::json!(args.limit)),
         ("has_more", serde_json::json!(has_more)),
@@ -382,9 +467,84 @@ fn cmd_search(ctx: &Ctx, args: cli::search::SearchArgs) -> Result<(), OvError> {
             serde_json::json!(!search_result.window_exhausted),
         ),
     ];
+
+    // Help agents recover from empty results.
+    if count == 0 {
+        let has_prefix = query.contains(':');
+        let next_actions = if has_prefix {
+            let stripped = strip_prefixes(&query);
+            if stripped.trim().is_empty() {
+                // Filter-only query (e.g. `tag:#x in:Project`) — no plain text to fall back on.
+                serde_json::json!([
+                    {"cmd": "ov tags --sort count --limit 30",
+                     "why": "Inspect actual frontmatter tags — your prefix filter may not match any"},
+                    {"cmd": "ov list --limit 20",
+                     "why": "Browse notes to verify the filter targets exist"}
+                ])
+            } else {
+                serde_json::json!([
+                    {"cmd": format!("ov search --query \"{stripped}\""),
+                     "why": "Prefix filters (tag:/in:/type:) only match frontmatter fields. Plain keyword search covers body too."},
+                    {"cmd": "ov tags --sort count --limit 30", "why": "Inspect actual frontmatter tags before retrying"}
+                ])
+            }
+        } else {
+            serde_json::json!([
+                {"cmd": format!("ov read --note \"{query}\" --fuzzy"),
+                 "why": "Try fuzzy match against note titles"},
+                {"cmd": "ov index status", "why": "Confirm index is built and current"}
+            ])
+        };
+        meta.push(("next_actions", next_actions));
+    }
+
     output::print_with_meta(&results, count, ctx.jsonl, &ctx.fields, meta);
 
     Ok(())
+}
+
+/// Parse a `--fm` value string into a JSON value.
+/// Comma-separated → array of strings (empty members rejected). Otherwise scalar string.
+/// Numeric/boolean coercion is intentionally not done — use `--frontmatter` JSON for that.
+/// Returns InvalidInput on empty values or arrays with empty members so agents
+/// don't silently write garbage frontmatter.
+fn parse_fm_value(s: &str) -> Result<serde_json::Value, OvError> {
+    if s.is_empty() {
+        return Err(OvError::InvalidInput(
+            "--fm value cannot be empty. For an empty list use `--frontmatter` JSON.".to_string(),
+        ));
+    }
+    if s.contains(',') {
+        let items: Vec<&str> = s.split(',').map(|v| v.trim()).collect();
+        if items.iter().any(|v| v.is_empty()) {
+            return Err(OvError::InvalidInput(format!(
+                "--fm array value `{s}` has empty member(s). Don't use trailing/leading/double commas."
+            )));
+        }
+        Ok(serde_json::Value::Array(
+            items
+                .into_iter()
+                .map(|v| serde_json::Value::String(v.to_string()))
+                .collect(),
+        ))
+    } else {
+        Ok(serde_json::Value::String(s.to_string()))
+    }
+}
+
+/// Remove `tag:`/`in:`/`title:`/`date:`/`type:` prefixed tokens from a query.
+/// Used to suggest a plain-keyword fallback when prefix-only search returns 0.
+fn strip_prefixes(q: &str) -> String {
+    q.split_whitespace()
+        .filter(|tok| {
+            !(tok.starts_with("tag:")
+                || tok.starts_with("in:")
+                || tok.starts_with("title:")
+                || tok.starts_with("date:")
+                || tok.starts_with("type:"))
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 // ─── index ───────────────────────────────────────────────────────────────
@@ -724,10 +884,32 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
     // Build content
     let mut content = String::new();
 
-    if let Some(ref frontmatter_json) = args.frontmatter {
+    let has_inline_fm = args.frontmatter.is_some() || !args.fm.is_empty();
+    if has_inline_fm && args.template.is_none() {
         let mut fm_map: std::collections::BTreeMap<String, serde_json::Value> =
-            serde_json::from_str(frontmatter_json)
-                .map_err(|e| OvError::InvalidInput(format!("Invalid frontmatter JSON: {e}")))?;
+            if let Some(ref frontmatter_json) = args.frontmatter {
+                serde_json::from_str(frontmatter_json)
+                    .map_err(|e| OvError::InvalidInput(format!("Invalid frontmatter JSON: {e}")))?
+            } else {
+                std::collections::BTreeMap::new()
+            };
+
+        // --fm key=value pairs (override frontmatter JSON on conflict)
+        for kv in &args.fm {
+            let (k, v) = kv.split_once('=').ok_or_else(|| {
+                OvError::InvalidInput(format!(
+                    "--fm expected key=value, got `{kv}`. Example: --fm status=active"
+                ))
+            })?;
+            let key = k.trim();
+            if key.is_empty() {
+                return Err(OvError::InvalidInput(format!(
+                    "--fm key cannot be empty (got `{kv}`)"
+                )));
+            }
+            let value = parse_fm_value(v.trim())?;
+            fm_map.insert(key.to_string(), value);
+        }
 
         if let Some(ref tags_str) = args.tags {
             let tag_values: Vec<serde_json::Value> = tags_str
@@ -882,7 +1064,17 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
         "path": relative,
         "title": clean_title,
     });
-    output::print_output(&data, 1, ctx.jsonl, &ctx.fields);
+    let next_actions = serde_json::json!([
+        {"cmd": "ov index build", "why": "Refresh search index so the new note becomes findable"},
+        {"cmd": format!("ov read --note \"{}\"", clean_title), "why": "Verify the note rendered as expected"}
+    ]);
+    output::print_with_meta(
+        &data,
+        1,
+        ctx.jsonl,
+        &ctx.fields,
+        vec![("next_actions", next_actions)],
+    );
 
     Ok(())
 }
@@ -895,8 +1087,14 @@ fn cmd_append(ctx: &Ctx, args: cli::append::AppendArgs) -> Result<(), OvError> {
     let file_path = vault.resolve_note_with_mode(&note_name, args.fuzzy)?;
     let relative = vault.relative_path(&file_path);
 
+    // Content sources, in priority order:
+    //   1. --stdin (explicit)
+    //   2. --content "-" (sentinel → read stdin, lets agents avoid arg-parsing pitfalls
+    //      when content starts with `-`)
+    //   3. --content <text>
     let mut new_content = String::new();
-    if args.stdin {
+    let want_stdin = args.stdin || matches!(args.content.as_deref(), Some("-"));
+    if want_stdin {
         std::io::stdin().read_to_string(&mut new_content)?;
     } else if let Some(ref text) = args.content {
         new_content = text.clone();
@@ -962,7 +1160,16 @@ fn cmd_append(ctx: &Ctx, args: cli::append::AppendArgs) -> Result<(), OvError> {
         "path": relative,
         "section": args.section,
     });
-    output::print_output(&data, 1, ctx.jsonl, &ctx.fields);
+    let next_actions = serde_json::json!([
+        {"cmd": "ov index build", "why": "Refresh search index so the new content becomes findable"}
+    ]);
+    output::print_with_meta(
+        &data,
+        1,
+        ctx.jsonl,
+        &ctx.fields,
+        vec![("next_actions", next_actions)],
+    );
 
     Ok(())
 }
@@ -1423,4 +1630,231 @@ fn schema_skill() -> String {
 - `ov schema skill` — this document
 "#
     .to_string()
+}
+
+// ─── diagnostics ─────────────────────────────────────────────────────────
+
+fn cmd_orphans(ctx: &Ctx, args: cli::orphans::OrphansArgs) -> Result<(), OvError> {
+    let vault = open_vault(ctx)?;
+    let exclude_dirs: Vec<String> = args
+        .exclude_dirs
+        .as_deref()
+        .unwrap_or("Files/_archive,docs/480ai")
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let link_idx = index::link_index::LinkIndex::build(vault.notes());
+    let mut orphans = service::find_orphans(vault.notes(), &link_idx, &exclude_dirs);
+
+    sort_orphans(&mut orphans, &args.sort);
+    let total = orphans.len();
+    orphans.truncate(args.limit);
+    let count = orphans.len();
+
+    let meta = vec![
+        ("total", serde_json::json!(total)),
+        ("limit", serde_json::json!(args.limit)),
+        ("excluded_dirs", serde_json::json!(exclude_dirs)),
+    ];
+    output::print_with_meta(&orphans, count, ctx.jsonl, &ctx.fields, meta);
+    Ok(())
+}
+
+fn sort_orphans(items: &mut [service::OrphanNote], sort: &str) {
+    match sort {
+        "title" => items.sort_by(|a, b| a.title.cmp(&b.title)),
+        "words" => items.sort_by_key(|a| a.word_count),
+        _ => items.sort_by(|a, b| b.modified.cmp(&a.modified)), // modified desc
+    }
+}
+
+fn cmd_stubs(ctx: &Ctx, args: cli::stubs::StubsArgs) -> Result<(), OvError> {
+    let vault = open_vault(ctx)?;
+    let mut stubs = service::find_stubs(vault.notes(), args.max_words, args.dir.as_deref());
+
+    match args.sort.as_str() {
+        "modified" => stubs.sort_by(|a, b| b.modified.cmp(&a.modified)),
+        "title" => stubs.sort_by(|a, b| a.title.cmp(&b.title)),
+        _ => stubs.sort_by_key(|a| a.word_count), // words asc (shortest first)
+    }
+
+    let total = stubs.len();
+    stubs.truncate(args.limit);
+    let count = stubs.len();
+
+    let meta = vec![
+        ("total", serde_json::json!(total)),
+        ("max_words", serde_json::json!(args.max_words)),
+        ("limit", serde_json::json!(args.limit)),
+    ];
+    output::print_with_meta(&stubs, count, ctx.jsonl, &ctx.fields, meta);
+    Ok(())
+}
+
+fn cmd_dead_links(ctx: &Ctx, args: cli::dead_links::DeadLinksArgs) -> Result<(), OvError> {
+    let vault = open_vault(ctx)?;
+    let mut dead = service::find_dead_links(vault.notes());
+    let total = dead.len();
+    dead.truncate(args.limit);
+    let count = dead.len();
+
+    let mut meta = vec![
+        ("total", serde_json::json!(total)),
+        ("limit", serde_json::json!(args.limit)),
+    ];
+    if total > 0 {
+        meta.push((
+            "next_actions",
+            serde_json::json!([
+                {"cmd": "ov create --title \"<target>\" --dir Zettelkasten",
+                 "why": "If the target should exist, create it as a stub note"},
+                {"cmd": "ov read --note \"<source>\" --raw",
+                 "why": "Inspect the source line and edit the broken `[[...]]` manually if obsolete"}
+            ]),
+        ));
+    }
+    output::print_with_meta(&dead, count, ctx.jsonl, &ctx.fields, meta);
+    Ok(())
+}
+
+fn cmd_topics(ctx: &Ctx, args: cli::topics::TopicsArgs) -> Result<(), OvError> {
+    let vault = open_vault(ctx)?;
+    let mut topics = service::aggregate_topics(vault.notes(), args.min_count);
+    topics.truncate(args.limit);
+    let count = topics.len();
+    output::print_output(&topics, count, ctx.jsonl, &ctx.fields);
+    Ok(())
+}
+
+fn cmd_archive(ctx: &Ctx, args: cli::archive::ArchiveArgs) -> Result<(), OvError> {
+    let note_name = require_field(args.note, "note")?;
+    let vault = open_vault(ctx)?;
+
+    // Ambiguity check: if --note resolves to multiple files (same stem in different dirs),
+    // refuse rather than silently picking the first one. Caller must use a path-qualified
+    // form like "Projects/Foo" to disambiguate.
+    let stem_query = std::path::Path::new(&note_name)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| note_name.clone());
+    let is_path_qualified = note_name.contains('/');
+    if !is_path_qualified {
+        let matches: Vec<&std::path::PathBuf> = vault
+            .files()
+            .iter()
+            .filter(|f| {
+                f.file_stem()
+                    .map(|s| s.to_string_lossy().eq_ignore_ascii_case(&stem_query))
+                    .unwrap_or(false)
+            })
+            .collect();
+        if matches.len() > 1 {
+            let candidates: Vec<String> = matches.iter().map(|p| vault.relative_path(p)).collect();
+            return Err(OvError::InvalidInput(format!(
+                "Ambiguous --note `{note_name}`: {} matches. Pass a path-qualified name to disambiguate. Candidates: {}",
+                candidates.len(),
+                candidates.join(", ")
+            )));
+        }
+    }
+
+    let source = vault.resolve_note_with_mode(&note_name, args.fuzzy)?;
+
+    // Boundary check: source must canonicalize inside vault root.
+    let canonical_root = vault
+        .root
+        .canonicalize()
+        .map_err(|e| OvError::General(format!("Cannot canonicalize vault root: {e}")))?;
+    let canonical_source = source
+        .canonicalize()
+        .map_err(|e| OvError::General(format!("Cannot canonicalize source: {e}")))?;
+    if !canonical_source.starts_with(&canonical_root) {
+        return Err(OvError::InvalidInput(format!(
+            "Source path escapes vault boundary: {}",
+            source.display()
+        )));
+    }
+    let source_rel = vault.relative_path(&source);
+
+    // Default destination: Files/_archive/<YYYY-MM-DD>/
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let dest_dir_rel = args
+        .to
+        .clone()
+        .unwrap_or_else(|| format!("Files/_archive/{today}"));
+
+    // Reject obviously-bad inputs early (fast feedback to agents).
+    // Final authority is the canonical-path check after dir creation.
+    if dest_dir_rel.split('/').any(|seg| seg == "..")
+        || dest_dir_rel.starts_with('/')
+        // Windows-style absolute (C:\, D:\) — refuse defensively
+        || (dest_dir_rel.len() >= 2
+            && dest_dir_rel.as_bytes()[1] == b':'
+            && dest_dir_rel.as_bytes()[0].is_ascii_alphabetic())
+        || dest_dir_rel.starts_with('\\')
+    {
+        return Err(OvError::InvalidInput(format!(
+            "Archive destination must be a relative path inside the vault: `{dest_dir_rel}`"
+        )));
+    }
+
+    let dest_dir_abs = vault.root.join(&dest_dir_rel);
+    let filename = source
+        .file_name()
+        .ok_or_else(|| OvError::InvalidInput("Source has no filename".to_string()))?;
+    let dest_abs = dest_dir_abs.join(filename);
+    let dest_rel = format!("{}/{}", dest_dir_rel, filename.to_string_lossy());
+
+    // Refuse to overwrite existing target — both basename and full path
+    if dest_abs.exists() {
+        return Err(OvError::AlreadyExists(format!(
+            "Archive target already exists: {dest_rel}. Use a different --to or rename first."
+        )));
+    }
+
+    if args.dry_run {
+        let data = serde_json::json!({
+            "action": "would_archive",
+            "source": source_rel,
+            "dest": dest_rel,
+            "dry_run": true,
+        });
+        output::print_output(&data, 1, ctx.jsonl, &ctx.fields);
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(&dest_dir_abs)?;
+
+    // After dir creation, canonicalize dest dir to defeat symlink-based escape.
+    let canonical_dest_dir = dest_dir_abs.canonicalize().map_err(|e| {
+        OvError::General(format!("Cannot canonicalize archive destination dir: {e}"))
+    })?;
+    if !canonical_dest_dir.starts_with(&canonical_root) {
+        return Err(OvError::InvalidInput(format!(
+            "Archive destination escapes vault boundary after canonicalization: `{dest_dir_rel}`"
+        )));
+    }
+
+    std::fs::rename(&source, &dest_abs)?;
+
+    let data = serde_json::json!({
+        "action": "archived",
+        "source": source_rel,
+        "dest": dest_rel,
+    });
+    let next_actions = serde_json::json!([
+        {"cmd": "ov index build",
+         "why": "Refresh index — moved note's old path is stale"},
+        {"cmd": "ov dead-links",
+         "why": "Backlinks to the archived note are NOT auto-updated; surface broken refs"}
+    ]);
+    output::print_with_meta(
+        &data,
+        1,
+        ctx.jsonl,
+        &ctx.fields,
+        vec![("next_actions", next_actions)],
+    );
+    Ok(())
 }

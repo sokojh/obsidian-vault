@@ -1223,11 +1223,13 @@ fn test_stale_index_cleanup() {
     std::fs::remove_file(&path).unwrap();
     ov().args(["index", "build"]).assert().success();
 
-    // Should no longer appear in search
+    // Should no longer appear in search results.
+    // Note: empty-result responses now include `next_actions` hints that echo the query, so we
+    // can't simply assert the raw stdout doesn't contain "StaleTest". Check the data array.
     ov().args(["search", "--query", "StaleTest"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("StaleTest").not());
+        .stdout(predicate::str::contains("\"data\":[]"));
 
     let _ = ov().args(["index", "clear"]).assert();
 }
