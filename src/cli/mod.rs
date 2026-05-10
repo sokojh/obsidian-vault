@@ -1,4 +1,5 @@
 pub mod append;
+pub mod archive;
 pub mod config;
 pub mod create;
 pub mod daily;
@@ -102,4 +103,7 @@ pub enum Command {
 
     /// List frontmatter `topics:` field with occurrence counts (counterpart to `tags`)
     Topics(topics::TopicsArgs),
+
+    /// Move a note to Files/_archive/<YYYY-MM-DD>/ (or --to). Backlinks are NOT auto-updated; run `ov dead-links` afterwards
+    Archive(archive::ArchiveArgs),
 }

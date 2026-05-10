@@ -199,6 +199,10 @@ fn run(cli: Cli) -> Result<(), OvError> {
             let args = merge_or_use(json_input, args)?;
             cmd_topics(&ctx, args)
         }
+        Command::Archive(args) => {
+            let args = merge_or_use(json_input, args)?;
+            cmd_archive(&ctx, args)
+        }
     }
 }
 
@@ -1687,5 +1691,74 @@ fn cmd_topics(ctx: &Ctx, args: cli::topics::TopicsArgs) -> Result<(), OvError> {
     topics.truncate(args.limit);
     let count = topics.len();
     output::print_output(&topics, count, ctx.jsonl, &ctx.fields);
+    Ok(())
+}
+
+fn cmd_archive(ctx: &Ctx, args: cli::archive::ArchiveArgs) -> Result<(), OvError> {
+    let note_name = require_field(args.note, "note")?;
+    let vault = open_vault(ctx)?;
+    let source = vault.resolve_note_with_mode(&note_name, args.fuzzy)?;
+    let source_rel = vault.relative_path(&source);
+
+    // Default destination: Files/_archive/<YYYY-MM-DD>/
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let dest_dir_rel = args
+        .to
+        .clone()
+        .unwrap_or_else(|| format!("Files/_archive/{today}"));
+
+    // Boundary check: dest must stay inside vault
+    if dest_dir_rel.contains("..") || dest_dir_rel.starts_with('/') {
+        return Err(OvError::InvalidInput(format!(
+            "Archive destination must be a relative path inside the vault: `{dest_dir_rel}`"
+        )));
+    }
+
+    let dest_dir_abs = vault.root.join(&dest_dir_rel);
+    let filename = source
+        .file_name()
+        .ok_or_else(|| OvError::InvalidInput("Source has no filename".to_string()))?;
+    let dest_abs = dest_dir_abs.join(filename);
+    let dest_rel = format!("{}/{}", dest_dir_rel, filename.to_string_lossy());
+
+    // Refuse to overwrite existing target
+    if dest_abs.exists() {
+        return Err(OvError::AlreadyExists(format!(
+            "Archive target already exists: {dest_rel}"
+        )));
+    }
+
+    if args.dry_run {
+        let data = serde_json::json!({
+            "action": "would_archive",
+            "source": source_rel,
+            "dest": dest_rel,
+            "dry_run": true,
+        });
+        output::print_output(&data, 1, ctx.jsonl, &ctx.fields);
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(&dest_dir_abs)?;
+    std::fs::rename(&source, &dest_abs)?;
+
+    let data = serde_json::json!({
+        "action": "archived",
+        "source": source_rel,
+        "dest": dest_rel,
+    });
+    let next_actions = serde_json::json!([
+        {"cmd": "ov index build",
+         "why": "Refresh index — moved note's old path is stale"},
+        {"cmd": "ov dead-links",
+         "why": "Backlinks to the archived note are NOT auto-updated; surface broken refs"}
+    ]);
+    output::print_with_meta(
+        &data,
+        1,
+        ctx.jsonl,
+        &ctx.fields,
+        vec![("next_actions", next_actions)],
+    );
     Ok(())
 }
