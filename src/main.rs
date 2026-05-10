@@ -183,6 +183,22 @@ fn run(cli: Cli) -> Result<(), OvError> {
         }
         Command::Index(args) => cmd_index(&ctx, args),
         Command::Schema(args) => cmd_schema(&ctx, args),
+        Command::Orphans(args) => {
+            let args = merge_or_use(json_input, args)?;
+            cmd_orphans(&ctx, args)
+        }
+        Command::Stubs(args) => {
+            let args = merge_or_use(json_input, args)?;
+            cmd_stubs(&ctx, args)
+        }
+        Command::DeadLinks(args) => {
+            let args = merge_or_use(json_input, args)?;
+            cmd_dead_links(&ctx, args)
+        }
+        Command::Topics(args) => {
+            let args = merge_or_use(json_input, args)?;
+            cmd_topics(&ctx, args)
+        }
     }
 }
 
@@ -1577,4 +1593,99 @@ fn schema_skill() -> String {
 - `ov schema skill` — this document
 "#
     .to_string()
+}
+
+// ─── diagnostics ─────────────────────────────────────────────────────────
+
+fn cmd_orphans(ctx: &Ctx, args: cli::orphans::OrphansArgs) -> Result<(), OvError> {
+    let vault = open_vault(ctx)?;
+    let exclude_dirs: Vec<String> = args
+        .exclude_dirs
+        .as_deref()
+        .unwrap_or("Files/_archive,docs/480ai")
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let link_idx = index::link_index::LinkIndex::build(vault.notes());
+    let mut orphans = service::find_orphans(vault.notes(), &link_idx, &exclude_dirs);
+
+    sort_orphans(&mut orphans, &args.sort);
+    let total = orphans.len();
+    orphans.truncate(args.limit);
+    let count = orphans.len();
+
+    let meta = vec![
+        ("total", serde_json::json!(total)),
+        ("limit", serde_json::json!(args.limit)),
+        ("excluded_dirs", serde_json::json!(exclude_dirs)),
+    ];
+    output::print_with_meta(&orphans, count, ctx.jsonl, &ctx.fields, meta);
+    Ok(())
+}
+
+fn sort_orphans(items: &mut [service::OrphanNote], sort: &str) {
+    match sort {
+        "title" => items.sort_by(|a, b| a.title.cmp(&b.title)),
+        "words" => items.sort_by(|a, b| a.word_count.cmp(&b.word_count)),
+        _ => items.sort_by(|a, b| b.modified.cmp(&a.modified)), // modified desc
+    }
+}
+
+fn cmd_stubs(ctx: &Ctx, args: cli::stubs::StubsArgs) -> Result<(), OvError> {
+    let vault = open_vault(ctx)?;
+    let mut stubs = service::find_stubs(vault.notes(), args.max_words, args.dir.as_deref());
+
+    match args.sort.as_str() {
+        "modified" => stubs.sort_by(|a, b| b.modified.cmp(&a.modified)),
+        "title" => stubs.sort_by(|a, b| a.title.cmp(&b.title)),
+        _ => stubs.sort_by(|a, b| a.word_count.cmp(&b.word_count)), // words asc (shortest first)
+    }
+
+    let total = stubs.len();
+    stubs.truncate(args.limit);
+    let count = stubs.len();
+
+    let meta = vec![
+        ("total", serde_json::json!(total)),
+        ("max_words", serde_json::json!(args.max_words)),
+        ("limit", serde_json::json!(args.limit)),
+    ];
+    output::print_with_meta(&stubs, count, ctx.jsonl, &ctx.fields, meta);
+    Ok(())
+}
+
+fn cmd_dead_links(ctx: &Ctx, args: cli::dead_links::DeadLinksArgs) -> Result<(), OvError> {
+    let vault = open_vault(ctx)?;
+    let mut dead = service::find_dead_links(vault.notes());
+    let total = dead.len();
+    dead.truncate(args.limit);
+    let count = dead.len();
+
+    let mut meta = vec![
+        ("total", serde_json::json!(total)),
+        ("limit", serde_json::json!(args.limit)),
+    ];
+    if total > 0 {
+        meta.push((
+            "next_actions",
+            serde_json::json!([
+                {"cmd": "ov rename --old <target> --new <existing>",
+                 "why": "If the target was renamed, fix all backlinks at once (when `ov rename` ships)"},
+                {"cmd": "ov create --title <target>",
+                 "why": "If the target should exist, create it as a stub"}
+            ]),
+        ));
+    }
+    output::print_with_meta(&dead, count, ctx.jsonl, &ctx.fields, meta);
+    Ok(())
+}
+
+fn cmd_topics(ctx: &Ctx, args: cli::topics::TopicsArgs) -> Result<(), OvError> {
+    let vault = open_vault(ctx)?;
+    let mut topics = service::aggregate_topics(vault.notes(), args.min_count);
+    topics.truncate(args.limit);
+    let count = topics.len();
+    output::print_output(&topics, count, ctx.jsonl, &ctx.fields);
+    Ok(())
 }

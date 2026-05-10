@@ -1,8 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use serde::Serialize;
 
+use crate::index::link_index::LinkIndex;
 use crate::model::link::Backlink;
 use crate::model::note::{Note, NoteSummary};
 use crate::model::tag::TagSummary;
@@ -318,4 +319,162 @@ pub fn find_backlinks(
     }
 
     backlinks
+}
+
+// ─── diagnose ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct OrphanNote {
+    pub title: String,
+    pub path: String,
+    pub dir: String,
+    pub modified: String,
+    pub word_count: usize,
+}
+
+/// Notes with zero incoming links (no backlinks). Optionally exclude given dirs.
+pub fn find_orphans(notes: &[Note], link_idx: &LinkIndex, exclude_dirs: &[String]) -> Vec<OrphanNote> {
+    let mut out = Vec::new();
+    for note in notes {
+        if exclude_dirs.iter().any(|d| note.dir.starts_with(d)) {
+            continue;
+        }
+        let stem = Path::new(&note.path)
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let incoming_count = link_idx.incoming.get(&stem).map(|v| v.len()).unwrap_or(0);
+        if incoming_count == 0 {
+            out.push(OrphanNote {
+                title: note.title.clone(),
+                path: note.path.clone(),
+                dir: note.dir.clone(),
+                modified: note.file_meta.modified.clone(),
+                word_count: note.word_count,
+            });
+        }
+    }
+    out
+}
+
+#[derive(Debug, Serialize)]
+pub struct StubNote {
+    pub title: String,
+    pub path: String,
+    pub dir: String,
+    pub modified: String,
+    pub word_count: usize,
+}
+
+/// Notes whose body word count is below `max_words`. Optionally restrict by dir.
+pub fn find_stubs(notes: &[Note], max_words: usize, dir: Option<&str>) -> Vec<StubNote> {
+    notes
+        .iter()
+        .filter(|n| n.word_count <= max_words)
+        .filter(|n| dir.is_none_or(|d| n.dir.starts_with(d)))
+        .map(|n| StubNote {
+            title: n.title.clone(),
+            path: n.path.clone(),
+            dir: n.dir.clone(),
+            modified: n.file_meta.modified.clone(),
+            word_count: n.word_count,
+        })
+        .collect()
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeadLink {
+    pub source: String,
+    pub source_path: String,
+    pub target: String,
+    pub line: usize,
+}
+
+/// `[[wiki-link]]`s whose target stem doesn't exist as a note in the vault.
+pub fn find_dead_links(notes: &[Note]) -> Vec<DeadLink> {
+    let known_stems: HashSet<String> = notes
+        .iter()
+        .map(|n| {
+            Path::new(&n.path)
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string()
+        })
+        .collect();
+
+    // Aliases also count as "exists"
+    let known_aliases: HashSet<String> = notes
+        .iter()
+        .flat_map(|n| n.frontmatter.aliases.clone())
+        .collect();
+
+    let mut dead = Vec::new();
+    for note in notes {
+        for link in &note.links {
+            // Strip optional heading anchor `Note#Section` before lookup
+            let target_stem = link
+                .target
+                .split_once('#')
+                .map(|(s, _)| s)
+                .unwrap_or(&link.target)
+                .to_string();
+            if target_stem.is_empty() {
+                continue; // self-link to current heading like [[#Section]]
+            }
+            if known_stems.contains(&target_stem) || known_aliases.contains(&target_stem) {
+                continue;
+            }
+            dead.push(DeadLink {
+                source: note.title.clone(),
+                source_path: note.path.clone(),
+                target: link.target.clone(),
+                line: link.line,
+            });
+        }
+    }
+    dead
+}
+
+#[derive(Debug, Serialize)]
+pub struct TopicSummary {
+    pub topic: String,
+    pub count: usize,
+    pub notes: Vec<String>,
+}
+
+/// Aggregate frontmatter `topics:` field across all notes.
+/// `topics` is not a first-class Frontmatter field (yet) — pulled from `extra`.
+/// Counterpart to `aggregate_tags` but for the curated `topics` array.
+pub fn aggregate_topics(notes: &[Note], min_count: usize) -> Vec<TopicSummary> {
+    let mut counts: HashMap<String, Vec<String>> = HashMap::new();
+    for note in notes {
+        let Some(topics_val) = note.frontmatter.extra.get("topics") else {
+            continue;
+        };
+        let serde_json::Value::Array(arr) = topics_val else {
+            continue;
+        };
+        for item in arr {
+            if let serde_json::Value::String(topic) = item {
+                counts
+                    .entry(topic.clone())
+                    .or_default()
+                    .push(note.title.clone());
+            }
+        }
+    }
+    let mut summaries: Vec<TopicSummary> = counts
+        .into_iter()
+        .filter(|(_, notes)| notes.len() >= min_count)
+        .map(|(topic, notes)| TopicSummary {
+            count: notes.len(),
+            topic,
+            notes,
+        })
+        .collect();
+    // Sort by count desc, then topic asc
+    summaries.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.topic.cmp(&b.topic)));
+    summaries
 }
