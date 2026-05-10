@@ -35,6 +35,13 @@ pub struct CreateArgs {
     #[arg(long, conflicts_with_all = ["template", "vars"])]
     pub frontmatter: Option<String>,
 
+    /// Frontmatter field as key=value, repeatable. Easier than --frontmatter JSON for shells.
+    /// e.g. `--fm status=active --fm topics=tmap,ranking`. Comma-split values become YAML arrays.
+    /// Merges with --frontmatter if both provided (--fm wins on key conflict).
+    #[arg(long = "fm", value_name = "KEY=VAL", conflicts_with = "template")]
+    #[serde(default)]
+    pub fm: Vec<String>,
+
     /// Section headings: comma-separated string ("A,B") or JSON array (["A","B"])
     #[arg(long)]
     #[serde(default, deserialize_with = "string_or_array")]

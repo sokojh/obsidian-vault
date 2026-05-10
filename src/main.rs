@@ -424,7 +424,8 @@ fn cmd_config(ctx: &Ctx, args: cli::config::ConfigArgs) -> Result<(), OvError> {
 // ─── search ──────────────────────────────────────────────────────────────
 
 fn cmd_search(ctx: &Ctx, args: cli::search::SearchArgs) -> Result<(), OvError> {
-    let query = require_field(args.query, "query")?;
+    // Accept query as positional or --query (positional takes precedence when both set is impossible due to conflicts_with)
+    let query = require_field(args.query.or(args.query_pos), "query")?;
     let vault_path = paths::resolve_vault_path(ctx.vault.as_deref())?;
     let search_result = search::search(&vault_path, &query, args.limit, args.offset, args.snippet)?;
     let mut results = search_result.hits;
@@ -468,6 +469,21 @@ fn cmd_search(ctx: &Ctx, args: cli::search::SearchArgs) -> Result<(), OvError> {
     output::print_with_meta(&results, count, ctx.jsonl, &ctx.fields, meta);
 
     Ok(())
+}
+
+/// Parse a `--fm` value string into a JSON value.
+/// Comma-separated → array of strings. Otherwise scalar string.
+/// Numeric/boolean coercion is intentionally not done — use `--frontmatter` JSON for that.
+fn parse_fm_value(s: &str) -> serde_json::Value {
+    if s.contains(',') {
+        serde_json::Value::Array(
+            s.split(',')
+                .map(|v| serde_json::Value::String(v.trim().to_string()))
+                .collect(),
+        )
+    } else {
+        serde_json::Value::String(s.to_string())
+    }
 }
 
 /// Remove `tag:`/`in:`/`title:`/`date:`/`type:` prefixed tokens from a query.
@@ -822,10 +838,25 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
     // Build content
     let mut content = String::new();
 
-    if let Some(ref frontmatter_json) = args.frontmatter {
+    let has_inline_fm = args.frontmatter.is_some() || !args.fm.is_empty();
+    if has_inline_fm && args.template.is_none() {
         let mut fm_map: std::collections::BTreeMap<String, serde_json::Value> =
-            serde_json::from_str(frontmatter_json)
-                .map_err(|e| OvError::InvalidInput(format!("Invalid frontmatter JSON: {e}")))?;
+            if let Some(ref frontmatter_json) = args.frontmatter {
+                serde_json::from_str(frontmatter_json)
+                    .map_err(|e| OvError::InvalidInput(format!("Invalid frontmatter JSON: {e}")))?
+            } else {
+                std::collections::BTreeMap::new()
+            };
+
+        // --fm key=value pairs (override frontmatter JSON on conflict)
+        for kv in &args.fm {
+            let (k, v) = kv.split_once('=').ok_or_else(|| {
+                OvError::InvalidInput(format!(
+                    "--fm expected key=value, got `{kv}`. Example: --fm status=active"
+                ))
+            })?;
+            fm_map.insert(k.trim().to_string(), parse_fm_value(v.trim()));
+        }
 
         if let Some(ref tags_str) = args.tags {
             let tag_values: Vec<serde_json::Value> = tags_str
@@ -1003,8 +1034,14 @@ fn cmd_append(ctx: &Ctx, args: cli::append::AppendArgs) -> Result<(), OvError> {
     let file_path = vault.resolve_note_with_mode(&note_name, args.fuzzy)?;
     let relative = vault.relative_path(&file_path);
 
+    // Content sources, in priority order:
+    //   1. --stdin (explicit)
+    //   2. --content "-" (sentinel → read stdin, lets agents avoid arg-parsing pitfalls
+    //      when content starts with `-`)
+    //   3. --content <text>
     let mut new_content = String::new();
-    if args.stdin {
+    let want_stdin = args.stdin || matches!(args.content.as_deref(), Some("-"));
+    if want_stdin {
         std::io::stdin().read_to_string(&mut new_content)?;
     } else if let Some(ref text) = args.content {
         new_content = text.clone();

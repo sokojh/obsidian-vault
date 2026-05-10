@@ -3,6 +3,11 @@ use serde::Deserialize;
 
 #[derive(Args, Deserialize, Default)]
 pub struct SearchArgs {
+    /// Search query (positional). Equivalent to --query. e.g. `ov search "TMAP"`
+    #[arg(value_name = "QUERY", conflicts_with = "query")]
+    #[serde(default)]
+    pub query_pos: Option<String>,
+
     /// Search query — plain keywords or prefixed filters (tag:, in:, title:, date:, type:)
     #[arg(long)]
     pub query: Option<String>,
