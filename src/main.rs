@@ -22,13 +22,76 @@ use output::json::ErrorResponse;
 use vault::Vault;
 
 fn main() {
-    let cli = Cli::parse();
+    // Use try_parse so clap errors become JSON instead of human-formatted stderr.
+    // Help/Version are normal exits, not errors — let clap render them.
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) => {
+            use clap::error::ErrorKind;
+            match e.kind() {
+                ErrorKind::DisplayHelp
+                | ErrorKind::DisplayVersion
+                | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => e.exit(),
+                _ => {
+                    let ov_err = clap_error_to_ov(&e);
+                    let err_resp = ErrorResponse::from_error(&ov_err);
+                    eprintln!("{}", err_resp.to_json_string());
+                    process::exit(ov_err.exit_code());
+                }
+            }
+        }
+    };
     config::update_check::maybe_notify_update();
 
     if let Err(e) = run(cli) {
         let err_resp = ErrorResponse::from_error(&e);
         eprintln!("{}", err_resp.to_json_string());
         process::exit(e.exit_code());
+    }
+}
+
+/// Convert clap parse errors into OvError so agents see consistent JSON output.
+fn clap_error_to_ov(e: &clap::Error) -> OvError {
+    use clap::error::{ContextKind, ErrorKind};
+    let kind = e.kind();
+
+    let get_ctx = |k: ContextKind| {
+        e.get(k)
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "?".to_string())
+    };
+
+    let msg = match kind {
+        ErrorKind::UnknownArgument => {
+            format!("Unknown argument: {}", get_ctx(ContextKind::InvalidArg))
+        }
+        ErrorKind::InvalidValue => format!(
+            "Invalid value `{}` for argument {}",
+            get_ctx(ContextKind::InvalidValue),
+            get_ctx(ContextKind::InvalidArg)
+        ),
+        ErrorKind::MissingRequiredArgument => format!(
+            "Missing required argument: {}",
+            get_ctx(ContextKind::InvalidArg)
+        ),
+        ErrorKind::InvalidSubcommand => format!(
+            "Unknown subcommand: {}",
+            get_ctx(ContextKind::InvalidSubcommand)
+        ),
+        _ => e
+            .render()
+            .to_string()
+            .lines()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("CLI parse error")
+            .trim_start_matches("error: ")
+            .trim()
+            .to_string(),
+    };
+
+    match kind {
+        ErrorKind::MissingRequiredArgument => OvError::MissingField(msg),
+        _ => OvError::InvalidInput(msg),
     }
 }
 
@@ -373,7 +436,7 @@ fn cmd_search(ctx: &Ctx, args: cli::search::SearchArgs) -> Result<(), OvError> {
     }
 
     let count = results.len();
-    let meta = vec![
+    let mut meta = vec![
         ("offset", serde_json::json!(args.offset)),
         ("limit", serde_json::json!(args.limit)),
         ("has_more", serde_json::json!(has_more)),
@@ -382,9 +445,44 @@ fn cmd_search(ctx: &Ctx, args: cli::search::SearchArgs) -> Result<(), OvError> {
             serde_json::json!(!search_result.window_exhausted),
         ),
     ];
+
+    // Help agents recover from empty results.
+    if count == 0 {
+        let has_prefix = query.contains(':');
+        let next_actions = if has_prefix {
+            serde_json::json!([
+                {"cmd": format!("ov search --query \"{}\"", strip_prefixes(&query)),
+                 "why": "Prefix filters (tag:/in:/type:) only match frontmatter fields. Plain keyword search covers body too."},
+                {"cmd": "ov tags --sort count --limit 30", "why": "Inspect actual frontmatter tags before retrying"}
+            ])
+        } else {
+            serde_json::json!([
+                {"cmd": format!("ov read --note \"{}\" --fuzzy", query),
+                 "why": "Try fuzzy match against note titles"},
+                {"cmd": "ov index status", "why": "Confirm index is built and current"}
+            ])
+        };
+        meta.push(("next_actions", next_actions));
+    }
+
     output::print_with_meta(&results, count, ctx.jsonl, &ctx.fields, meta);
 
     Ok(())
+}
+
+/// Remove `tag:`/`in:`/`title:`/`date:`/`type:` prefixed tokens from a query.
+/// Used to suggest a plain-keyword fallback when prefix-only search returns 0.
+fn strip_prefixes(q: &str) -> String {
+    q.split_whitespace()
+        .filter(|tok| {
+            !(tok.starts_with("tag:")
+                || tok.starts_with("in:")
+                || tok.starts_with("title:")
+                || tok.starts_with("date:")
+                || tok.starts_with("type:"))
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 // ─── index ───────────────────────────────────────────────────────────────
@@ -882,7 +980,17 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
         "path": relative,
         "title": clean_title,
     });
-    output::print_output(&data, 1, ctx.jsonl, &ctx.fields);
+    let next_actions = serde_json::json!([
+        {"cmd": "ov index build", "why": "Refresh search index so the new note becomes findable"},
+        {"cmd": format!("ov read --note \"{}\"", clean_title), "why": "Verify the note rendered as expected"}
+    ]);
+    output::print_with_meta(
+        &data,
+        1,
+        ctx.jsonl,
+        &ctx.fields,
+        vec![("next_actions", next_actions)],
+    );
 
     Ok(())
 }
@@ -962,7 +1070,16 @@ fn cmd_append(ctx: &Ctx, args: cli::append::AppendArgs) -> Result<(), OvError> {
         "path": relative,
         "section": args.section,
     });
-    output::print_output(&data, 1, ctx.jsonl, &ctx.fields);
+    let next_actions = serde_json::json!([
+        {"cmd": "ov index build", "why": "Refresh search index so the new content becomes findable"}
+    ]);
+    output::print_with_meta(
+        &data,
+        1,
+        ctx.jsonl,
+        &ctx.fields,
+        vec![("next_actions", next_actions)],
+    );
 
     Ok(())
 }

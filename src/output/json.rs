@@ -28,6 +28,35 @@ impl<T: Serialize> ApiResponse<T> {
         self.meta.insert(key.to_string(), value);
         self
     }
+
+    /// Attach `next_actions: [{cmd, why}, ...]` so agents see suggested follow-up commands.
+    pub fn with_next_actions(self, actions: Vec<NextAction>) -> Self {
+        if actions.is_empty() {
+            return self;
+        }
+        self.with_meta(
+            "next_actions",
+            serde_json::to_value(actions).unwrap_or_default(),
+        )
+    }
+}
+
+/// Suggested follow-up command for agents. Embedded in successful responses' `meta.next_actions`.
+#[derive(Debug, Serialize, Clone)]
+pub struct NextAction {
+    /// Shell command an agent could run next, e.g. "ov index build"
+    pub cmd: String,
+    /// Why this is suggested, in one short sentence
+    pub why: String,
+}
+
+impl NextAction {
+    pub fn new(cmd: &str, why: &str) -> Self {
+        Self {
+            cmd: cmd.to_string(),
+            why: why.to_string(),
+        }
+    }
 }
 
 /// Structured error response for agents
