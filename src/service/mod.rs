@@ -317,23 +317,72 @@ pub struct OrphanNote {
 }
 
 /// Notes with zero incoming links (no backlinks). Optionally exclude given dirs.
+///
+/// Match semantics (case-insensitive throughout, matching Obsidian + ov resolver):
+///   • bare wikilink stem `[[Plan]]`     → matches a note with stem `Plan`
+///   • path-qualified `[[Projects/Plan]]` → matches a note at path `Projects/Plan.md`
+///   • alias-only `[[Plan]]`              → matches a note whose `aliases:` includes `Plan`
+///   • heading anchor `[[Plan#Intro]]`    → strips `#Intro` and treats as `[[Plan]]`
+///
+/// Earlier versions looked up `link_index.incoming[stem]`, which used the *raw*
+/// link target as the key — so `[[plan]]` (lowercase), `[[Plan#Intro]]` (with anchor),
+/// and `[[Projects/Plan]]` (path-qualified) never matched a note named `Plan.md`.
+/// That misclassified linked notes as orphans en masse.
 pub fn find_orphans(
     notes: &[Note],
     link_idx: &LinkIndex,
     exclude_dirs: &[String],
 ) -> Vec<OrphanNote> {
+    // Build a single normalized set of "things any note links to" (lowercased, anchor-stripped).
+    // For each raw key we also record (a) bare basename and (b) full normalized path so
+    // path-qualified targets like "Projects/Plan" match notes at "projects/plan.md".
+    let mut linked_to_ci: HashSet<String> = HashSet::new();
+    for raw_key in link_idx.incoming.keys() {
+        // Strip optional heading anchor `Foo#Section` → `Foo`
+        let head = raw_key
+            .split_once('#')
+            .map(|(s, _)| s)
+            .unwrap_or(raw_key.as_str());
+        if head.is_empty() {
+            continue; // self-link [[#Section]]
+        }
+        let head_ci = head.to_lowercase();
+        linked_to_ci.insert(head_ci.clone());
+        // For path-qualified target ("projects/plan"), also record the basename so notes
+        // referenced by their unqualified stem still match.
+        if let Some(last) = head_ci.rsplit('/').next() {
+            if last != head_ci {
+                linked_to_ci.insert(last.to_string());
+            }
+        }
+    }
+
     let mut out = Vec::new();
     for note in notes {
         if exclude_dirs.iter().any(|d| note.dir.starts_with(d)) {
             continue;
         }
-        let stem = Path::new(&note.path)
+        let stem_ci = Path::new(&note.path)
             .file_stem()
             .unwrap_or_default()
             .to_string_lossy()
-            .to_string();
-        let incoming_count = link_idx.incoming.get(&stem).map(|v| v.len()).unwrap_or(0);
-        if incoming_count == 0 {
+            .to_lowercase();
+        let path_ci = note
+            .path
+            .strip_suffix(".md")
+            .unwrap_or(&note.path)
+            .to_lowercase();
+
+        // Linked if anyone references the stem, the full path, or any alias.
+        let is_linked = linked_to_ci.contains(&stem_ci)
+            || linked_to_ci.contains(&path_ci)
+            || note
+                .frontmatter
+                .aliases
+                .iter()
+                .any(|a| linked_to_ci.contains(&a.to_lowercase()));
+
+        if !is_linked {
             out.push(OrphanNote {
                 title: note.title.clone(),
                 path: note.path.clone(),
@@ -356,11 +405,18 @@ pub struct StubNote {
 }
 
 /// Notes whose body word count is below `max_words`. Optionally restrict by dir.
-pub fn find_stubs(notes: &[Note], max_words: usize, dir: Option<&str>) -> Vec<StubNote> {
+/// `exclude_dirs` skips e.g. `Files/_archive` so archived stubs don't pollute results.
+pub fn find_stubs(
+    notes: &[Note],
+    max_words: usize,
+    dir: Option<&str>,
+    exclude_dirs: &[String],
+) -> Vec<StubNote> {
     notes
         .iter()
         .filter(|n| n.word_count <= max_words)
         .filter(|n| dir.is_none_or(|d| n.dir.starts_with(d)))
+        .filter(|n| !exclude_dirs.iter().any(|d| n.dir.starts_with(d)))
         .map(|n| StubNote {
             title: n.title.clone(),
             path: n.path.clone(),
@@ -386,7 +442,14 @@ pub struct DeadLink {
 ///   • path-qualified `[[Folder/Foo]]`  → check against relative paths
 ///   • aliases      `[[Plan]]` matches a note with `aliases: [Plan]`
 ///   • heading anchor `[[Foo#Section]]` → strip `#…` and treat as `[[Foo]]`
-pub fn find_dead_links(notes: &[Note]) -> Vec<DeadLink> {
+///
+/// Embeds (`![[image.png]]`, `![[paper.pdf]]`) referencing non-`.md` targets are
+/// skipped — those are attachment refs, not note refs, and we don't index attachments.
+/// Embeds of markdown notes (`![[some-note]]`) ARE checked normally.
+///
+/// `exclude_dirs` skips notes whose `dir` starts with any prefix (default e.g. `Files/_archive`)
+/// so archived content with stale links doesn't pollute live diagnostics.
+pub fn find_dead_links(notes: &[Note], exclude_dirs: &[String]) -> Vec<DeadLink> {
     let known_stems_ci: HashSet<String> = notes
         .iter()
         .map(|n| {
@@ -412,7 +475,25 @@ pub fn find_dead_links(notes: &[Note]) -> Vec<DeadLink> {
 
     let mut dead = Vec::new();
     for note in notes {
+        if exclude_dirs.iter().any(|d| note.dir.starts_with(d)) {
+            continue;
+        }
         for link in &note.links {
+            // Skip attachment embeds — `![[image.png]]`, `![[paper.pdf]]` etc. are file refs,
+            // not note refs. We don't index attachments so they'd all be false positives.
+            // Markdown embeds (`![[some-note]]` with no extension or `.md`) are still checked.
+            let target_lc_full = link.target.to_lowercase();
+            if link.is_embed {
+                let bare = target_lc_full
+                    .split_once('#')
+                    .map(|(s, _)| s)
+                    .unwrap_or(target_lc_full.as_str());
+                let is_attachment = bare.contains('.') && !bare.ends_with(".md");
+                if is_attachment {
+                    continue;
+                }
+            }
+
             // Strip optional heading anchor `Note#Section` before lookup
             let raw = link
                 .target
@@ -457,9 +538,18 @@ pub struct TopicSummary {
 /// Aggregate frontmatter `topics:` field across all notes.
 /// `topics` is not a first-class Frontmatter field (yet) — pulled from `extra`.
 /// Counterpart to `aggregate_tags` but for the curated `topics` array.
-pub fn aggregate_topics(notes: &[Note], min_count: usize) -> Vec<TopicSummary> {
+/// `exclude_dirs` skips e.g. `Files/_archive` so archived notes don't permanently
+/// inflate topic counts (consistent with `find_orphans`).
+pub fn aggregate_topics(
+    notes: &[Note],
+    min_count: usize,
+    exclude_dirs: &[String],
+) -> Vec<TopicSummary> {
     let mut counts: HashMap<String, Vec<String>> = HashMap::new();
     for note in notes {
+        if exclude_dirs.iter().any(|d| note.dir.starts_with(d)) {
+            continue;
+        }
         let Some(topics_val) = note.frontmatter.extra.get("topics") else {
             continue;
         };

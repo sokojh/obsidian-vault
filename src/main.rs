@@ -472,22 +472,29 @@ fn cmd_search(ctx: &Ctx, args: cli::search::SearchArgs) -> Result<(), OvError> {
     if count == 0 {
         let has_prefix = query.contains(':');
         let next_actions = if has_prefix {
-            let stripped = strip_prefixes(&query);
-            if stripped.trim().is_empty() {
-                // Filter-only query (e.g. `tag:#x in:Project`) — no plain text to fall back on.
-                serde_json::json!([
+            // strip_prefixes returns None if the residual is empty or contains `"`
+            // (which would break our quoted command). In either case, fall back to
+            // generic discovery hints rather than emitting a malformed command.
+            match strip_prefixes(&query) {
+                Some(stripped) => serde_json::json!([
+                    {"cmd": format!("ov search --query \"{stripped}\""),
+                     "why": "Prefix filters (tag:/in:/type:) only match frontmatter fields. Plain keyword search covers body too."},
+                    {"cmd": "ov tags --sort count --limit 30", "why": "Inspect actual frontmatter tags before retrying"}
+                ]),
+                None => serde_json::json!([
                     {"cmd": "ov tags --sort count --limit 30",
                      "why": "Inspect actual frontmatter tags — your prefix filter may not match any"},
                     {"cmd": "ov list --limit 20",
                      "why": "Browse notes to verify the filter targets exist"}
-                ])
-            } else {
-                serde_json::json!([
-                    {"cmd": format!("ov search --query \"{stripped}\""),
-                     "why": "Prefix filters (tag:/in:/type:) only match frontmatter fields. Plain keyword search covers body too."},
-                    {"cmd": "ov tags --sort count --limit 30", "why": "Inspect actual frontmatter tags before retrying"}
-                ])
+                ]),
             }
+        } else if query.contains('"') {
+            // Quoted query — don't echo into a quoted command, just suggest neighbors.
+            serde_json::json!([
+                {"cmd": "ov tags --sort count --limit 30",
+                 "why": "Browse tags to refine the query"},
+                {"cmd": "ov index status", "why": "Confirm index is built and current"}
+            ])
         } else {
             serde_json::json!([
                 {"cmd": format!("ov read --note \"{query}\" --fuzzy"),
@@ -505,17 +512,18 @@ fn cmd_search(ctx: &Ctx, args: cli::search::SearchArgs) -> Result<(), OvError> {
 
 /// Parse a `--fm` value string into a JSON value.
 /// Comma-separated → array of strings (empty members rejected). Otherwise scalar string.
+/// Both ASCII `,` and fullwidth `，` (U+FF0C) are accepted as separators since Korean/CJK
+/// keyboards often produce the latter when the IME is active.
 /// Numeric/boolean coercion is intentionally not done — use `--frontmatter` JSON for that.
-/// Returns InvalidInput on empty values or arrays with empty members so agents
-/// don't silently write garbage frontmatter.
 fn parse_fm_value(s: &str) -> Result<serde_json::Value, OvError> {
     if s.is_empty() {
         return Err(OvError::InvalidInput(
             "--fm value cannot be empty. For an empty list use `--frontmatter` JSON.".to_string(),
         ));
     }
-    if s.contains(',') {
-        let items: Vec<&str> = s.split(',').map(|v| v.trim()).collect();
+    let has_separator = s.contains(',') || s.contains('\u{FF0C}'); // ASCII `,` or fullwidth `，`
+    if has_separator {
+        let items: Vec<&str> = s.split([',', '\u{FF0C}']).map(|v| v.trim()).collect();
         if items.iter().any(|v| v.is_empty()) {
             return Err(OvError::InvalidInput(format!(
                 "--fm array value `{s}` has empty member(s). Don't use trailing/leading/double commas."
@@ -534,8 +542,13 @@ fn parse_fm_value(s: &str) -> Result<serde_json::Value, OvError> {
 
 /// Remove `tag:`/`in:`/`title:`/`date:`/`type:` prefixed tokens from a query.
 /// Used to suggest a plain-keyword fallback when prefix-only search returns 0.
-fn strip_prefixes(q: &str) -> String {
-    q.split_whitespace()
+///
+/// Returns `None` if the residual would be unsuitable as a fallback hint:
+/// (a) empty after stripping, or (b) contains `"` which would break the
+/// double-quoted command we render. Callers should suppress the hint in those cases.
+fn strip_prefixes(q: &str) -> Option<String> {
+    let stripped: String = q
+        .split_whitespace()
         .filter(|tok| {
             !(tok.starts_with("tag:")
                 || tok.starts_with("in:")
@@ -544,7 +557,13 @@ fn strip_prefixes(q: &str) -> String {
                 || tok.starts_with("type:"))
         })
         .collect::<Vec<_>>()
-        .join(" ")
+        .join(" ");
+    let trimmed = stripped.trim();
+    if trimmed.is_empty() || trimmed.contains('"') {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 // ─── index ───────────────────────────────────────────────────────────────
@@ -1296,6 +1315,42 @@ fn schema_commands() -> Vec<serde_json::Value> {
             "supports_dry_run": false,
             "supports_json_input": false
         }),
+        // ─── diagnostics ─────────────────────────────────────────────────
+        serde_json::json!({
+            "name": "orphans",
+            "description": "List notes with zero incoming links. Defaults exclude Files/_archive and docs/480ai",
+            "has_side_effects": false,
+            "supports_dry_run": false,
+            "supports_json_input": true
+        }),
+        serde_json::json!({
+            "name": "stubs",
+            "description": "List notes whose body word count is below --max-words (default 100)",
+            "has_side_effects": false,
+            "supports_dry_run": false,
+            "supports_json_input": true
+        }),
+        serde_json::json!({
+            "name": "dead-links",
+            "description": "List [[wiki-links]] whose target note doesn't exist. Skips attachment embeds",
+            "has_side_effects": false,
+            "supports_dry_run": false,
+            "supports_json_input": true
+        }),
+        serde_json::json!({
+            "name": "topics",
+            "description": "Aggregate frontmatter `topics:` field with occurrence counts (counterpart to tags)",
+            "has_side_effects": false,
+            "supports_dry_run": false,
+            "supports_json_input": true
+        }),
+        serde_json::json!({
+            "name": "archive",
+            "description": "Move a note to Files/_archive/<YYYY-MM-DD>/ (or --to). Backlinks NOT auto-updated",
+            "has_side_effects": true,
+            "supports_dry_run": true,
+            "supports_json_input": true
+        }),
     ]
 }
 
@@ -1496,6 +1551,7 @@ fn schema_describe(cmd_name: &str) -> Result<serde_json::Value, OvError> {
                     {"name": "tags", "type": "string", "required": false, "description": "Comma-separated tags"},
                     {"name": "template", "type": "string", "required": false, "description": "Template note name"},
                     {"name": "frontmatter", "type": "string", "required": false, "description": "YAML frontmatter as JSON string"},
+                    {"name": "fm", "type": "array", "required": false, "description": "Repeatable key=value pairs. Comma-separated values become arrays (status=active, topics=a,b). Merges with --frontmatter, fm wins on conflict. Numeric/bool coercion not supported — use --frontmatter for that."},
                     {"name": "sections", "type": "string", "required": false, "description": "Comma-separated section headings"},
                     {"name": "content", "type": "string", "required": false, "description": "Initial body text"},
                     {"name": "vars", "type": "string", "required": false, "description": "Template variables (key=val,key=val)"},
@@ -1579,6 +1635,116 @@ fn schema_describe(cmd_name: &str) -> Result<serde_json::Value, OvError> {
                 {"description": "Clear index", "cli": "ov index clear"}
             ]
         }),
+        // ─── diagnostics ─────────────────────────────────────────────────
+        "orphans" => serde_json::json!({
+            "name": "orphans",
+            "description": "List notes with zero incoming links",
+            "has_side_effects": false,
+            "input": {
+                "fields": [
+                    {"name": "exclude_dirs", "type": "string", "required": false, "description": "Comma-separated dir prefixes to skip. Default: Files/_archive,docs/480ai"},
+                    {"name": "limit", "type": "integer", "required": false, "default": 100, "description": "Max results"},
+                    {"name": "offset", "type": "integer", "required": false, "default": 0, "description": "Skip first N"},
+                    {"name": "sort", "type": "string", "required": false, "default": "modified", "description": "modified | title | words"}
+                ]
+            },
+            "output": {
+                "data": "Array of {title, path, dir, modified, word_count}",
+                "meta": "{ total, offset, limit, has_more, excluded_dirs }"
+            },
+            "examples": [
+                {"description": "Top 20 orphans by modified", "cli": "ov orphans --limit 20"},
+                {"description": "Orphans in Zettelkasten only", "cli": "ov orphans --exclude-dirs \"\" --limit 50"}
+            ]
+        }),
+        "stubs" => serde_json::json!({
+            "name": "stubs",
+            "description": "List notes whose body word count is below max_words",
+            "has_side_effects": false,
+            "input": {
+                "fields": [
+                    {"name": "max_words", "type": "integer", "required": false, "default": 100, "description": "Max body word count to qualify as stub"},
+                    {"name": "dir", "type": "string", "required": false, "description": "Restrict to one directory"},
+                    {"name": "exclude_dirs", "type": "string", "required": false, "description": "Comma-separated dir prefixes to skip. Default: Files/_archive,docs/480ai"},
+                    {"name": "limit", "type": "integer", "required": false, "default": 100},
+                    {"name": "offset", "type": "integer", "required": false, "default": 0},
+                    {"name": "sort", "type": "string", "required": false, "default": "words", "description": "words (asc) | modified | title"}
+                ]
+            },
+            "output": {
+                "data": "Array of {title, path, dir, modified, word_count}",
+                "meta": "{ total, offset, max_words, limit, has_more }"
+            },
+            "examples": [
+                {"description": "Stubs in Zettelkasten under 80 words", "cli": "ov stubs --dir Zettelkasten --max-words 80"}
+            ]
+        }),
+        "dead-links" => serde_json::json!({
+            "name": "dead-links",
+            "description": "List [[wiki-links]] whose target note doesn't exist. Attachment embeds (`![[image.png]]`) are skipped",
+            "has_side_effects": false,
+            "input": {
+                "fields": [
+                    {"name": "exclude_dirs", "type": "string", "required": false, "description": "Skip notes IN these dirs. Default: Files/_archive,docs/480ai"},
+                    {"name": "limit", "type": "integer", "required": false, "default": 200},
+                    {"name": "offset", "type": "integer", "required": false, "default": 0}
+                ]
+            },
+            "output": {
+                "data": "Array of {source, source_path, target, line}",
+                "meta": "{ total, offset, limit, has_more, next_actions? }"
+            },
+            "examples": [
+                {"description": "All dead links", "cli": "ov dead-links --limit 5000"}
+            ]
+        }),
+        "topics" => serde_json::json!({
+            "name": "topics",
+            "description": "Aggregate frontmatter `topics:` field across notes with occurrence counts. Counterpart to `tags`",
+            "has_side_effects": false,
+            "input": {
+                "fields": [
+                    {"name": "exclude_dirs", "type": "string", "required": false, "description": "Skip notes IN these dirs. Default: Files/_archive,docs/480ai"},
+                    {"name": "limit", "type": "integer", "required": false, "default": 50},
+                    {"name": "offset", "type": "integer", "required": false, "default": 0},
+                    {"name": "min_count", "type": "integer", "required": false, "default": 1, "description": "Only show topics with at least this many occurrences"}
+                ]
+            },
+            "output": {
+                "data": "Array of {topic, count, notes}",
+                "meta": "{ total, offset, limit, has_more }"
+            },
+            "examples": [
+                {"description": "Top 15 topics", "cli": "ov topics --limit 15"}
+            ]
+        }),
+        "archive" => serde_json::json!({
+            "name": "archive",
+            "description": "Move a note to Files/_archive/<YYYY-MM-DD>/ (or --to). Backlinks NOT auto-updated — run `ov dead-links` afterwards",
+            "has_side_effects": true,
+            "supports_dry_run": true,
+            "input": {
+                "fields": [
+                    {"name": "note", "type": "string", "required": true, "description": "Note name (filename without .md, or path-qualified for ambiguity)"},
+                    {"name": "to", "type": "string", "required": false, "description": "Target directory inside vault. Default: Files/_archive/<today>/"},
+                    {"name": "fuzzy", "type": "boolean", "required": false, "default": false},
+                    {"name": "dry_run", "type": "boolean", "required": false, "default": false}
+                ]
+            },
+            "output": {
+                "data": "{ action: 'archived' | 'would_archive', source, dest }",
+                "meta": "{ next_actions: [{cmd, why}, ...] }"
+            },
+            "errors": [
+                {"code": "NOTE_NOT_FOUND", "when": "Note name doesn't resolve"},
+                {"code": "INVALID_INPUT", "when": "Ambiguous --note (use path-qualified), or path traversal in --to"},
+                {"code": "ALREADY_EXISTS", "when": "Destination file already present"}
+            ],
+            "examples": [
+                {"description": "Default archive", "cli": "ov archive --note \"Old Plan\" --dry-run"},
+                {"description": "Path-qualified to disambiguate", "cli": "ov archive --note \"Zettelkasten/Foo\""}
+            ]
+        }),
         _ => {
             return Err(OvError::InvalidInput(format!(
                 "Unknown command: {cmd_name}. Use `ov schema commands` to list available commands"
@@ -1634,30 +1800,41 @@ fn schema_skill() -> String {
 
 // ─── diagnostics ─────────────────────────────────────────────────────────
 
-fn cmd_orphans(ctx: &Ctx, args: cli::orphans::OrphansArgs) -> Result<(), OvError> {
-    let vault = open_vault(ctx)?;
-    let exclude_dirs: Vec<String> = args
-        .exclude_dirs
-        .as_deref()
-        .unwrap_or("Files/_archive,docs/480ai")
+/// Default exclude_dirs for diagnostic commands. Archive/staging content rarely worth flagging.
+const DEFAULT_DIAG_EXCLUDE: &str = "Files/_archive,docs/480ai";
+
+fn parse_exclude_dirs(arg: Option<&str>) -> Vec<String> {
+    arg.unwrap_or(DEFAULT_DIAG_EXCLUDE)
         .split(',')
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .collect();
+        .collect()
+}
+
+fn cmd_orphans(ctx: &Ctx, args: cli::orphans::OrphansArgs) -> Result<(), OvError> {
+    let vault = open_vault(ctx)?;
+    let exclude_dirs = parse_exclude_dirs(args.exclude_dirs.as_deref());
     let link_idx = index::link_index::LinkIndex::build(vault.notes());
     let mut orphans = service::find_orphans(vault.notes(), &link_idx, &exclude_dirs);
 
     sort_orphans(&mut orphans, &args.sort);
     let total = orphans.len();
-    orphans.truncate(args.limit);
-    let count = orphans.len();
+    let page: Vec<_> = orphans
+        .into_iter()
+        .skip(args.offset)
+        .take(args.limit)
+        .collect();
+    let count = page.len();
+    let has_more = args.offset.saturating_add(count) < total;
 
     let meta = vec![
         ("total", serde_json::json!(total)),
+        ("offset", serde_json::json!(args.offset)),
         ("limit", serde_json::json!(args.limit)),
+        ("has_more", serde_json::json!(has_more)),
         ("excluded_dirs", serde_json::json!(exclude_dirs)),
     ];
-    output::print_with_meta(&orphans, count, ctx.jsonl, &ctx.fields, meta);
+    output::print_with_meta(&page, count, ctx.jsonl, &ctx.fields, meta);
     Ok(())
 }
 
@@ -1671,7 +1848,13 @@ fn sort_orphans(items: &mut [service::OrphanNote], sort: &str) {
 
 fn cmd_stubs(ctx: &Ctx, args: cli::stubs::StubsArgs) -> Result<(), OvError> {
     let vault = open_vault(ctx)?;
-    let mut stubs = service::find_stubs(vault.notes(), args.max_words, args.dir.as_deref());
+    let exclude_dirs = parse_exclude_dirs(args.exclude_dirs.as_deref());
+    let mut stubs = service::find_stubs(
+        vault.notes(),
+        args.max_words,
+        args.dir.as_deref(),
+        &exclude_dirs,
+    );
 
     match args.sort.as_str() {
         "modified" => stubs.sort_by(|a, b| b.modified.cmp(&a.modified)),
@@ -1680,50 +1863,76 @@ fn cmd_stubs(ctx: &Ctx, args: cli::stubs::StubsArgs) -> Result<(), OvError> {
     }
 
     let total = stubs.len();
-    stubs.truncate(args.limit);
-    let count = stubs.len();
+    let page: Vec<_> = stubs
+        .into_iter()
+        .skip(args.offset)
+        .take(args.limit)
+        .collect();
+    let count = page.len();
+    let has_more = args.offset.saturating_add(count) < total;
 
     let meta = vec![
         ("total", serde_json::json!(total)),
+        ("offset", serde_json::json!(args.offset)),
         ("max_words", serde_json::json!(args.max_words)),
         ("limit", serde_json::json!(args.limit)),
+        ("has_more", serde_json::json!(has_more)),
     ];
-    output::print_with_meta(&stubs, count, ctx.jsonl, &ctx.fields, meta);
+    output::print_with_meta(&page, count, ctx.jsonl, &ctx.fields, meta);
     Ok(())
 }
 
 fn cmd_dead_links(ctx: &Ctx, args: cli::dead_links::DeadLinksArgs) -> Result<(), OvError> {
     let vault = open_vault(ctx)?;
-    let mut dead = service::find_dead_links(vault.notes());
+    let exclude_dirs = parse_exclude_dirs(args.exclude_dirs.as_deref());
+    let mut dead = service::find_dead_links(vault.notes(), &exclude_dirs);
     let total = dead.len();
-    dead.truncate(args.limit);
-    let count = dead.len();
+    let page: Vec<_> = dead.drain(..).skip(args.offset).take(args.limit).collect();
+    let count = page.len();
+    let has_more = args.offset.saturating_add(count) < total;
 
     let mut meta = vec![
         ("total", serde_json::json!(total)),
+        ("offset", serde_json::json!(args.offset)),
         ("limit", serde_json::json!(args.limit)),
+        ("has_more", serde_json::json!(has_more)),
     ];
-    if total > 0 {
+    // Use the first concrete dead link as the example for next_actions, so an agent
+    // can copy/paste the command rather than substituting a literal `<target>`.
+    if let Some(first) = page.first() {
         meta.push((
             "next_actions",
             serde_json::json!([
-                {"cmd": "ov create --title \"<target>\" --dir Zettelkasten",
-                 "why": "If the target should exist, create it as a stub note"},
-                {"cmd": "ov read --note \"<source>\" --raw",
-                 "why": "Inspect the source line and edit the broken `[[...]]` manually if obsolete"}
+                {"cmd": format!("ov create --title \"{}\" --dir Zettelkasten", first.target),
+                 "why": "If the first dead target should exist, create it as a stub note"},
+                {"cmd": format!("ov read --note \"{}\" --raw", first.source),
+                 "why": "Inspect the source note and edit the broken `[[...]]` manually if obsolete"}
             ]),
         ));
     }
-    output::print_with_meta(&dead, count, ctx.jsonl, &ctx.fields, meta);
+    output::print_with_meta(&page, count, ctx.jsonl, &ctx.fields, meta);
     Ok(())
 }
 
 fn cmd_topics(ctx: &Ctx, args: cli::topics::TopicsArgs) -> Result<(), OvError> {
     let vault = open_vault(ctx)?;
-    let mut topics = service::aggregate_topics(vault.notes(), args.min_count);
-    topics.truncate(args.limit);
-    let count = topics.len();
-    output::print_output(&topics, count, ctx.jsonl, &ctx.fields);
+    let exclude_dirs = parse_exclude_dirs(args.exclude_dirs.as_deref());
+    let mut topics = service::aggregate_topics(vault.notes(), args.min_count, &exclude_dirs);
+    let total = topics.len();
+    let page: Vec<_> = topics
+        .drain(..)
+        .skip(args.offset)
+        .take(args.limit)
+        .collect();
+    let count = page.len();
+    let has_more = args.offset.saturating_add(count) < total;
+    let meta = vec![
+        ("total", serde_json::json!(total)),
+        ("offset", serde_json::json!(args.offset)),
+        ("limit", serde_json::json!(args.limit)),
+        ("has_more", serde_json::json!(has_more)),
+    ];
+    output::print_with_meta(&page, count, ctx.jsonl, &ctx.fields, meta);
     Ok(())
 }
 
@@ -1836,7 +2045,7 @@ fn cmd_archive(ctx: &Ctx, args: cli::archive::ArchiveArgs) -> Result<(), OvError
         )));
     }
 
-    std::fs::rename(&source, &dest_abs)?;
+    move_with_exdev_fallback(&source, &dest_abs)?;
 
     let data = serde_json::json!({
         "action": "archived",
@@ -1857,4 +2066,30 @@ fn cmd_archive(ctx: &Ctx, args: cli::archive::ArchiveArgs) -> Result<(), OvError
         vec![("next_actions", next_actions)],
     );
     Ok(())
+}
+
+/// fs::rename + fallback for cross-filesystem moves.
+/// iCloud vault → local SSD archive can return EXDEV ("Cross-device link").
+/// Stdlib's stable error kind for that is `CrossesDevices` (Rust 1.85+).
+fn move_with_exdev_fallback(src: &std::path::Path, dst: &std::path::Path) -> Result<(), OvError> {
+    match std::fs::rename(src, dst) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
+            // Copy then remove. fs::copy preserves content but not metadata; that's fine for
+            // a vault note since the archive use case prioritizes content preservation and
+            // Obsidian doesn't depend on creation/permission metadata being identical.
+            std::fs::copy(src, dst).map_err(|e| {
+                OvError::General(format!(
+                    "Cross-device archive copy failed: {e}. Source preserved at original location."
+                ))
+            })?;
+            std::fs::remove_file(src).map_err(|e| {
+                OvError::General(format!(
+                    "Archive copied to destination but failed to remove source: {e}. Manual cleanup needed."
+                ))
+            })?;
+            Ok(())
+        }
+        Err(e) => Err(OvError::Io(e)),
+    }
 }
