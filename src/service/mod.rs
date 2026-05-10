@@ -72,8 +72,8 @@ fn apply_list_filters(summaries: &mut Vec<NoteSummary>, params: &ListParams) {
         summaries.retain(|n| n.modified.starts_with(&date_filter));
     }
     match params.sort.as_str() {
-        "title" => summaries.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase())),
-        "size" | "words" => summaries.sort_by(|a, b| b.word_count.cmp(&a.word_count)),
+        "title" => summaries.sort_by_key(|a| a.title.to_lowercase()),
+        "size" | "words" => summaries.sort_by_key(|a| std::cmp::Reverse(a.word_count)),
         _ => summaries.sort_by(|a, b| b.modified.cmp(&a.modified)),
     }
     if params.reverse {
@@ -138,7 +138,7 @@ fn finish_aggregate_tags(
 
     match params.sort.as_str() {
         "name" => summaries.sort_by(|a, b| a.tag.cmp(&b.tag)),
-        _ => summaries.sort_by(|a, b| b.count.cmp(&a.count)),
+        _ => summaries.sort_by_key(|s| std::cmp::Reverse(s.count)),
     }
 
     if let Some(limit) = params.limit {
@@ -208,16 +208,8 @@ pub fn compute_stats_from_summaries(dirs: Vec<String>, summaries: &[NoteSummary]
         total_size_mb: "N/A".to_string(),
         evicted_files: 0,
         skipped_files: 0,
-        avg_words_per_note: if total_notes > 0 {
-            total_words / total_notes
-        } else {
-            0
-        },
-        avg_links_per_note: if total_notes > 0 {
-            total_links / total_notes
-        } else {
-            0
-        },
+        avg_words_per_note: total_words.checked_div(total_notes).unwrap_or(0),
+        avg_links_per_note: total_links.checked_div(total_notes).unwrap_or(0),
         top_tags,
         directory_list: dirs,
         source: "index".to_string(),
@@ -261,16 +253,8 @@ pub fn compute_stats(vault: &Vault, notes: &[Note]) -> VaultStats {
         total_size_mb: format!("{:.1}", total_size as f64 / 1_048_576.0),
         evicted_files: evicted,
         skipped_files: vault.skipped_count(),
-        avg_words_per_note: if total_notes > 0 {
-            total_words / total_notes
-        } else {
-            0
-        },
-        avg_links_per_note: if total_notes > 0 {
-            total_links / total_notes
-        } else {
-            0
-        },
+        avg_words_per_note: total_words.checked_div(total_notes).unwrap_or(0),
+        avg_links_per_note: total_links.checked_div(total_notes).unwrap_or(0),
         top_tags,
         directory_list: dirs,
         source: "full_scan".to_string(),
@@ -333,7 +317,11 @@ pub struct OrphanNote {
 }
 
 /// Notes with zero incoming links (no backlinks). Optionally exclude given dirs.
-pub fn find_orphans(notes: &[Note], link_idx: &LinkIndex, exclude_dirs: &[String]) -> Vec<OrphanNote> {
+pub fn find_orphans(
+    notes: &[Note],
+    link_idx: &LinkIndex,
+    exclude_dirs: &[String],
+) -> Vec<OrphanNote> {
     let mut out = Vec::new();
     for note in notes {
         if exclude_dirs.iter().any(|d| note.dir.starts_with(d)) {
@@ -391,39 +379,61 @@ pub struct DeadLink {
     pub line: usize,
 }
 
-/// `[[wiki-link]]`s whose target stem doesn't exist as a note in the vault.
+/// `[[wiki-link]]`s whose target doesn't exist as a note in the vault.
+///
+/// Match semantics (case-insensitive throughout, matching Obsidian + ov resolver):
+///   • bare stem    `[[Foo]]`            → check against filename stems
+///   • path-qualified `[[Folder/Foo]]`  → check against relative paths
+///   • aliases      `[[Plan]]` matches a note with `aliases: [Plan]`
+///   • heading anchor `[[Foo#Section]]` → strip `#…` and treat as `[[Foo]]`
 pub fn find_dead_links(notes: &[Note]) -> Vec<DeadLink> {
-    let known_stems: HashSet<String> = notes
+    let known_stems_ci: HashSet<String> = notes
         .iter()
         .map(|n| {
             Path::new(&n.path)
                 .file_stem()
                 .unwrap_or_default()
                 .to_string_lossy()
-                .to_string()
+                .to_lowercase()
         })
         .collect();
 
-    // Aliases also count as "exists"
-    let known_aliases: HashSet<String> = notes
+    // Path-qualified targets: lowercased relative path WITHOUT .md
+    let known_paths_ci: HashSet<String> = notes
         .iter()
-        .flat_map(|n| n.frontmatter.aliases.clone())
+        .map(|n| n.path.strip_suffix(".md").unwrap_or(&n.path).to_lowercase())
+        .collect();
+
+    // Aliases are case-insensitive too (Obsidian behavior)
+    let known_aliases_ci: HashSet<String> = notes
+        .iter()
+        .flat_map(|n| n.frontmatter.aliases.iter().map(|a| a.to_lowercase()))
         .collect();
 
     let mut dead = Vec::new();
     for note in notes {
         for link in &note.links {
             // Strip optional heading anchor `Note#Section` before lookup
-            let target_stem = link
+            let raw = link
                 .target
                 .split_once('#')
                 .map(|(s, _)| s)
-                .unwrap_or(&link.target)
-                .to_string();
-            if target_stem.is_empty() {
+                .unwrap_or(&link.target);
+            if raw.is_empty() {
                 continue; // self-link to current heading like [[#Section]]
             }
-            if known_stems.contains(&target_stem) || known_aliases.contains(&target_stem) {
+            let target_ci = raw.to_lowercase();
+
+            // 1. exact filename stem match
+            if known_stems_ci.contains(&target_ci) {
+                continue;
+            }
+            // 2. path-qualified target like [[Projects/Plan]] → match against relpath
+            if target_ci.contains('/') && known_paths_ci.contains(&target_ci) {
+                continue;
+            }
+            // 3. alias match
+            if known_aliases_ci.contains(&target_ci) {
                 continue;
             }
             dead.push(DeadLink {

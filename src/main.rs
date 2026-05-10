@@ -29,9 +29,10 @@ fn main() {
         Err(e) => {
             use clap::error::ErrorKind;
             match e.kind() {
-                ErrorKind::DisplayHelp
-                | ErrorKind::DisplayVersion
-                | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => e.exit(),
+                // Only --help / --version are normal human exits. Missing-subcommand
+                // (no args at all, or `ov` alone) goes through the JSON error path so
+                // agents always see a structured response.
+                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => e.exit(),
                 _ => {
                     let ov_err = clap_error_to_ov(&e);
                     let err_resp = ErrorResponse::from_error(&ov_err);
@@ -471,14 +472,25 @@ fn cmd_search(ctx: &Ctx, args: cli::search::SearchArgs) -> Result<(), OvError> {
     if count == 0 {
         let has_prefix = query.contains(':');
         let next_actions = if has_prefix {
-            serde_json::json!([
-                {"cmd": format!("ov search --query \"{}\"", strip_prefixes(&query)),
-                 "why": "Prefix filters (tag:/in:/type:) only match frontmatter fields. Plain keyword search covers body too."},
-                {"cmd": "ov tags --sort count --limit 30", "why": "Inspect actual frontmatter tags before retrying"}
-            ])
+            let stripped = strip_prefixes(&query);
+            if stripped.trim().is_empty() {
+                // Filter-only query (e.g. `tag:#x in:Project`) — no plain text to fall back on.
+                serde_json::json!([
+                    {"cmd": "ov tags --sort count --limit 30",
+                     "why": "Inspect actual frontmatter tags — your prefix filter may not match any"},
+                    {"cmd": "ov list --limit 20",
+                     "why": "Browse notes to verify the filter targets exist"}
+                ])
+            } else {
+                serde_json::json!([
+                    {"cmd": format!("ov search --query \"{stripped}\""),
+                     "why": "Prefix filters (tag:/in:/type:) only match frontmatter fields. Plain keyword search covers body too."},
+                    {"cmd": "ov tags --sort count --limit 30", "why": "Inspect actual frontmatter tags before retrying"}
+                ])
+            }
         } else {
             serde_json::json!([
-                {"cmd": format!("ov read --note \"{}\" --fuzzy", query),
+                {"cmd": format!("ov read --note \"{query}\" --fuzzy"),
                  "why": "Try fuzzy match against note titles"},
                 {"cmd": "ov index status", "why": "Confirm index is built and current"}
             ])
@@ -492,17 +504,31 @@ fn cmd_search(ctx: &Ctx, args: cli::search::SearchArgs) -> Result<(), OvError> {
 }
 
 /// Parse a `--fm` value string into a JSON value.
-/// Comma-separated → array of strings. Otherwise scalar string.
+/// Comma-separated → array of strings (empty members rejected). Otherwise scalar string.
 /// Numeric/boolean coercion is intentionally not done — use `--frontmatter` JSON for that.
-fn parse_fm_value(s: &str) -> serde_json::Value {
+/// Returns InvalidInput on empty values or arrays with empty members so agents
+/// don't silently write garbage frontmatter.
+fn parse_fm_value(s: &str) -> Result<serde_json::Value, OvError> {
+    if s.is_empty() {
+        return Err(OvError::InvalidInput(
+            "--fm value cannot be empty. For an empty list use `--frontmatter` JSON.".to_string(),
+        ));
+    }
     if s.contains(',') {
-        serde_json::Value::Array(
-            s.split(',')
-                .map(|v| serde_json::Value::String(v.trim().to_string()))
+        let items: Vec<&str> = s.split(',').map(|v| v.trim()).collect();
+        if items.iter().any(|v| v.is_empty()) {
+            return Err(OvError::InvalidInput(format!(
+                "--fm array value `{s}` has empty member(s). Don't use trailing/leading/double commas."
+            )));
+        }
+        Ok(serde_json::Value::Array(
+            items
+                .into_iter()
+                .map(|v| serde_json::Value::String(v.to_string()))
                 .collect(),
-        )
+        ))
     } else {
-        serde_json::Value::String(s.to_string())
+        Ok(serde_json::Value::String(s.to_string()))
     }
 }
 
@@ -875,7 +901,14 @@ fn cmd_create(ctx: &Ctx, args: cli::create::CreateArgs) -> Result<(), OvError> {
                     "--fm expected key=value, got `{kv}`. Example: --fm status=active"
                 ))
             })?;
-            fm_map.insert(k.trim().to_string(), parse_fm_value(v.trim()));
+            let key = k.trim();
+            if key.is_empty() {
+                return Err(OvError::InvalidInput(format!(
+                    "--fm key cannot be empty (got `{kv}`)"
+                )));
+            }
+            let value = parse_fm_value(v.trim())?;
+            fm_map.insert(key.to_string(), value);
         }
 
         if let Some(ref tags_str) = args.tags {
@@ -1631,7 +1664,7 @@ fn cmd_orphans(ctx: &Ctx, args: cli::orphans::OrphansArgs) -> Result<(), OvError
 fn sort_orphans(items: &mut [service::OrphanNote], sort: &str) {
     match sort {
         "title" => items.sort_by(|a, b| a.title.cmp(&b.title)),
-        "words" => items.sort_by(|a, b| a.word_count.cmp(&b.word_count)),
+        "words" => items.sort_by_key(|a| a.word_count),
         _ => items.sort_by(|a, b| b.modified.cmp(&a.modified)), // modified desc
     }
 }
@@ -1643,7 +1676,7 @@ fn cmd_stubs(ctx: &Ctx, args: cli::stubs::StubsArgs) -> Result<(), OvError> {
     match args.sort.as_str() {
         "modified" => stubs.sort_by(|a, b| b.modified.cmp(&a.modified)),
         "title" => stubs.sort_by(|a, b| a.title.cmp(&b.title)),
-        _ => stubs.sort_by(|a, b| a.word_count.cmp(&b.word_count)), // words asc (shortest first)
+        _ => stubs.sort_by_key(|a| a.word_count), // words asc (shortest first)
     }
 
     let total = stubs.len();
@@ -1674,10 +1707,10 @@ fn cmd_dead_links(ctx: &Ctx, args: cli::dead_links::DeadLinksArgs) -> Result<(),
         meta.push((
             "next_actions",
             serde_json::json!([
-                {"cmd": "ov rename --old <target> --new <existing>",
-                 "why": "If the target was renamed, fix all backlinks at once (when `ov rename` ships)"},
-                {"cmd": "ov create --title <target>",
-                 "why": "If the target should exist, create it as a stub"}
+                {"cmd": "ov create --title \"<target>\" --dir Zettelkasten",
+                 "why": "If the target should exist, create it as a stub note"},
+                {"cmd": "ov read --note \"<source>\" --raw",
+                 "why": "Inspect the source line and edit the broken `[[...]]` manually if obsolete"}
             ]),
         ));
     }
@@ -1697,7 +1730,51 @@ fn cmd_topics(ctx: &Ctx, args: cli::topics::TopicsArgs) -> Result<(), OvError> {
 fn cmd_archive(ctx: &Ctx, args: cli::archive::ArchiveArgs) -> Result<(), OvError> {
     let note_name = require_field(args.note, "note")?;
     let vault = open_vault(ctx)?;
+
+    // Ambiguity check: if --note resolves to multiple files (same stem in different dirs),
+    // refuse rather than silently picking the first one. Caller must use a path-qualified
+    // form like "Projects/Foo" to disambiguate.
+    let stem_query = std::path::Path::new(&note_name)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| note_name.clone());
+    let is_path_qualified = note_name.contains('/');
+    if !is_path_qualified {
+        let matches: Vec<&std::path::PathBuf> = vault
+            .files()
+            .iter()
+            .filter(|f| {
+                f.file_stem()
+                    .map(|s| s.to_string_lossy().eq_ignore_ascii_case(&stem_query))
+                    .unwrap_or(false)
+            })
+            .collect();
+        if matches.len() > 1 {
+            let candidates: Vec<String> = matches.iter().map(|p| vault.relative_path(p)).collect();
+            return Err(OvError::InvalidInput(format!(
+                "Ambiguous --note `{note_name}`: {} matches. Pass a path-qualified name to disambiguate. Candidates: {}",
+                candidates.len(),
+                candidates.join(", ")
+            )));
+        }
+    }
+
     let source = vault.resolve_note_with_mode(&note_name, args.fuzzy)?;
+
+    // Boundary check: source must canonicalize inside vault root.
+    let canonical_root = vault
+        .root
+        .canonicalize()
+        .map_err(|e| OvError::General(format!("Cannot canonicalize vault root: {e}")))?;
+    let canonical_source = source
+        .canonicalize()
+        .map_err(|e| OvError::General(format!("Cannot canonicalize source: {e}")))?;
+    if !canonical_source.starts_with(&canonical_root) {
+        return Err(OvError::InvalidInput(format!(
+            "Source path escapes vault boundary: {}",
+            source.display()
+        )));
+    }
     let source_rel = vault.relative_path(&source);
 
     // Default destination: Files/_archive/<YYYY-MM-DD>/
@@ -1707,8 +1784,16 @@ fn cmd_archive(ctx: &Ctx, args: cli::archive::ArchiveArgs) -> Result<(), OvError
         .clone()
         .unwrap_or_else(|| format!("Files/_archive/{today}"));
 
-    // Boundary check: dest must stay inside vault
-    if dest_dir_rel.contains("..") || dest_dir_rel.starts_with('/') {
+    // Reject obviously-bad inputs early (fast feedback to agents).
+    // Final authority is the canonical-path check after dir creation.
+    if dest_dir_rel.split('/').any(|seg| seg == "..")
+        || dest_dir_rel.starts_with('/')
+        // Windows-style absolute (C:\, D:\) — refuse defensively
+        || (dest_dir_rel.len() >= 2
+            && dest_dir_rel.as_bytes()[1] == b':'
+            && dest_dir_rel.as_bytes()[0].is_ascii_alphabetic())
+        || dest_dir_rel.starts_with('\\')
+    {
         return Err(OvError::InvalidInput(format!(
             "Archive destination must be a relative path inside the vault: `{dest_dir_rel}`"
         )));
@@ -1721,10 +1806,10 @@ fn cmd_archive(ctx: &Ctx, args: cli::archive::ArchiveArgs) -> Result<(), OvError
     let dest_abs = dest_dir_abs.join(filename);
     let dest_rel = format!("{}/{}", dest_dir_rel, filename.to_string_lossy());
 
-    // Refuse to overwrite existing target
+    // Refuse to overwrite existing target — both basename and full path
     if dest_abs.exists() {
         return Err(OvError::AlreadyExists(format!(
-            "Archive target already exists: {dest_rel}"
+            "Archive target already exists: {dest_rel}. Use a different --to or rename first."
         )));
     }
 
@@ -1740,6 +1825,17 @@ fn cmd_archive(ctx: &Ctx, args: cli::archive::ArchiveArgs) -> Result<(), OvError
     }
 
     std::fs::create_dir_all(&dest_dir_abs)?;
+
+    // After dir creation, canonicalize dest dir to defeat symlink-based escape.
+    let canonical_dest_dir = dest_dir_abs.canonicalize().map_err(|e| {
+        OvError::General(format!("Cannot canonicalize archive destination dir: {e}"))
+    })?;
+    if !canonical_dest_dir.starts_with(&canonical_root) {
+        return Err(OvError::InvalidInput(format!(
+            "Archive destination escapes vault boundary after canonicalization: `{dest_dir_rel}`"
+        )));
+    }
+
     std::fs::rename(&source, &dest_abs)?;
 
     let data = serde_json::json!({

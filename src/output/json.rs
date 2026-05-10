@@ -30,6 +30,8 @@ impl<T: Serialize> ApiResponse<T> {
     }
 
     /// Attach `next_actions: [{cmd, why}, ...]` so agents see suggested follow-up commands.
+    /// Reserved typed-builder API; current call sites use raw `with_meta("next_actions", json!(...))`.
+    #[allow(dead_code)]
     pub fn with_next_actions(self, actions: Vec<NextAction>) -> Self {
         if actions.is_empty() {
             return self;
@@ -42,6 +44,9 @@ impl<T: Serialize> ApiResponse<T> {
 }
 
 /// Suggested follow-up command for agents. Embedded in successful responses' `meta.next_actions`.
+/// Currently constructed via the `serde_json::json!` macro; this type is reserved for a future
+/// typed builder API (see `ApiResponse::with_next_actions`).
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Clone)]
 pub struct NextAction {
     /// Shell command an agent could run next, e.g. "ov index build"
@@ -50,6 +55,7 @@ pub struct NextAction {
     pub why: String,
 }
 
+#[allow(dead_code)]
 impl NextAction {
     pub fn new(cmd: &str, why: &str) -> Self {
         Self {
