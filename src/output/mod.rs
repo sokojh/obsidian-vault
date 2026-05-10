@@ -51,6 +51,11 @@ fn print_jsonl<T: Serialize>(data: &T, field_list: &Option<String>) {
 }
 
 /// Print a successful response with metadata (pagination, etc.)
+///
+/// In JSONL mode, meta is emitted as a trailing `{"_meta": {...}, "count": N}` line so
+/// agents that consume NDJSON still see `next_actions`, `total`, `has_more`, and pagination.
+/// Without this fallback the JSON contract was mode-dependent — `--jsonl` silently
+/// dropped all meta.
 pub fn print_with_meta<T: Serialize>(
     data: T,
     count: usize,
@@ -60,6 +65,17 @@ pub fn print_with_meta<T: Serialize>(
 ) {
     if jsonl {
         print_jsonl(&data, field_list);
+        if !meta.is_empty() {
+            let mut meta_obj = serde_json::Map::new();
+            for (k, v) in meta {
+                meta_obj.insert(k.to_string(), v);
+            }
+            let meta_line = serde_json::json!({
+                "_meta": serde_json::Value::Object(meta_obj),
+                "count": count,
+            });
+            println!("{}", serde_json::to_string(&meta_line).unwrap_or_default());
+        }
     } else {
         let mut response = ApiResponse::success(&data, count);
         for (key, value) in meta {

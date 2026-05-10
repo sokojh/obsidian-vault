@@ -13,6 +13,11 @@ pub struct OrphansArgs {
     #[serde(default = "default_limit_100")]
     pub limit: usize,
 
+    /// Skip first N results (for pagination)
+    #[arg(long, default_value = "0")]
+    #[serde(default)]
+    pub offset: usize,
+
     /// Sort: modified (default, newest first), title, words
     #[arg(long, default_value = "modified")]
     #[serde(default = "default_sort_modified")]

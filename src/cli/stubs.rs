@@ -12,10 +12,19 @@ pub struct StubsArgs {
     #[arg(long)]
     pub dir: Option<String>,
 
+    /// Comma-separated directory prefixes to exclude. Default: "Files/_archive,docs/480ai"
+    #[arg(long)]
+    pub exclude_dirs: Option<String>,
+
     /// Maximum number of results
     #[arg(long, short, default_value = "100")]
     #[serde(default = "default_limit_100")]
     pub limit: usize,
+
+    /// Skip first N results (for pagination)
+    #[arg(long, default_value = "0")]
+    #[serde(default)]
+    pub offset: usize,
 
     /// Sort: words (default, shortest first), modified, title
     #[arg(long, default_value = "words")]
